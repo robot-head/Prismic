@@ -115,6 +115,7 @@ def test_mega_popular_tag_ids_uses_the_same_use_count_basis_as_list_all(
 ) -> None:
     mega = repository.create("mega")
     rare = repository.create("rare")
+    boundary = repository.create("boundary")
 
     for path in ("a.jpg", "b.jpg", "c.jpg", "d.jpg"):
         migrated_connection.execute(
@@ -126,12 +127,18 @@ def test_mega_popular_tag_ids_uses_the_same_use_count_basis_as_list_all(
     # mega: 3 of 4 files (75%), rare: 1 of 4 (25%).
     migrated_connection.executemany(
         "INSERT INTO media_tags (media_id, tag_id) VALUES (?, ?)",
-        [(media_ids[0], rare.id), *((mid, mega.id) for mid in media_ids[:3])],
+        [
+            (media_ids[0], rare.id),
+            *((mid, mega.id) for mid in media_ids[:3]),
+            *((mid, boundary.id) for mid in media_ids[:2]),
+        ],
     )
 
-    assert repository.mega_popular_tag_ids(0.5, total_media_count=4) == frozenset({mega.id})
+    assert repository.mega_popular_tag_ids(0.5, total_media_count=4) == frozenset(
+        {mega.id, boundary.id}
+    )
     assert repository.mega_popular_tag_ids(0.1, total_media_count=4) == frozenset(
-        {mega.id, rare.id}
+        {mega.id, rare.id, boundary.id}
     )
 
 

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from PySide6.QtGui import QImage
 from pytestqt.qtbot import QtBot
 
 from prismic.media.image import ImageLoadError, downsample, load_image
@@ -63,3 +64,19 @@ def test_downsample_scales_down_a_large_image_preserving_aspect_ratio(
     assert result.height() < image.height()
     new_aspect = result.width() / result.height()
     assert abs(new_aspect - original_aspect) < 0.01
+
+
+def test_downsample_keeps_an_image_unchanged_at_the_dimension_boundary(qtbot: QtBot) -> None:
+    for width, height in ((64, 32), (32, 64)):
+        image = QImage(width, height, QImage.Format.Format_RGB32)
+
+        assert downsample(image, max_dimension=64) is image
+
+
+def test_downsample_scales_when_only_one_dimension_exceeds_the_bound(qtbot: QtBot) -> None:
+    image = QImage(300, 100, QImage.Format.Format_RGB32)
+
+    result = downsample(image, max_dimension=200)
+
+    assert result.width() == 200
+    assert result.height() < 100

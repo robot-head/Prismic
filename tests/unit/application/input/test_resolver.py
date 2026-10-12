@@ -1,3 +1,7 @@
+from dataclasses import FrozenInstanceError
+
+import pytest
+
 from prismic.application.input.resolver import (
     INPUT_CONTEXT_PRECEDENCE,
     InputContext,
@@ -66,3 +70,10 @@ def test_unregister_removes_a_handler() -> None:
     resolver.unregister(InputContext.GLOBAL_COMMAND)
 
     assert resolver.dispatch(InputEvent(key="a")) is False
+
+
+def test_input_event_is_immutable() -> None:
+    event = InputEvent(key="a")
+
+    with pytest.raises(FrozenInstanceError):
+        event.key = "b"  # type: ignore[misc]

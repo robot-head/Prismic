@@ -58,3 +58,9 @@ def test_seek_and_pause_do_not_raise(qtbot: QtBot, fixtures_dir: Path) -> None:
     player.seek(500)
     player.pause()
     player.stop()
+
+
+def test_playback_position_is_exposed_as_a_property(qtbot: QtBot) -> None:
+    player = VideoPlayer()
+
+    assert player.position_ms == player.qt_player.position()

@@ -116,13 +116,13 @@ def test_shift_click_does_not_deselect_existing_selection_outside_the_range(qtbo
 
 
 def test_shift_click_uses_the_nearest_selected_row_not_the_first(qtbot: QtBot) -> None:
-    view = _build(qtbot)
+    view = _build(qtbot, count=9)
 
-    _click(qtbot, view, 0)
-    _click(qtbot, view, 5, Qt.KeyboardModifier.ControlModifier)  # 0 and 5 both selected
-    _click(qtbot, view, 4, Qt.KeyboardModifier.ShiftModifier)  # nearest to row 4 is row 5
+    _click(qtbot, view, 2)
+    _click(qtbot, view, 7, Qt.KeyboardModifier.ControlModifier)  # 2 and 7 both selected
+    _click(qtbot, view, 4, Qt.KeyboardModifier.ShiftModifier)  # row 2 is three rows away
 
-    assert _selected_rows(view) == [0, 4, 5]
+    assert _selected_rows(view) == [2, 3, 4, 7]
 
 
 def test_shift_click_with_nothing_selected_behaves_like_a_plain_add(qtbot: QtBot) -> None:

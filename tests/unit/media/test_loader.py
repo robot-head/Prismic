@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from PySide6.QtGui import QImage
 from pytestqt.qtbot import QtBot
 
 import prismic.media.loader as loader_module
@@ -130,3 +131,29 @@ def test_rapid_navigation_only_the_final_request_ever_produces_a_result(
     assert results[:-1] == [None, None, None, None]
     assert results[-1] is not None
     assert results[-1].request_id == request_ids[-1]
+
+
+def test_equal_but_distinct_request_ids_are_not_stale(qtbot: QtBot) -> None:
+    loader = ImageLoader()
+    request_id = 0
+    for _ in range(300):
+        request_id = loader.begin_request()
+    equal_but_distinct_id = int(str(request_id))
+
+    assert equal_but_distinct_id == request_id
+    assert id(equal_but_distinct_id) != id(request_id)
+    assert loader.is_stale(equal_but_distinct_id) is False
+
+
+def test_default_loader_downsamples_to_2048_pixels(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    decoded = QImage(4096, 2048, QImage.Format.Format_RGB32)
+    monkeypatch.setattr(loader_module, "load_image", lambda _path: decoded)
+    loader = ImageLoader()
+
+    result = loader.load(loader.begin_request(), tmp_path / "large.jpg")
+
+    assert result is not None
+    assert result.image is not None
+    assert (result.image.width(), result.image.height()) == (2048, 1024)

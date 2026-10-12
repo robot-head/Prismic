@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,11 @@ def test_every_shortcut_has_a_label_and_a_description() -> None:
         assert definition.description.strip(), definition.id
 
 
+def test_shortcut_definitions_are_immutable() -> None:
+    with pytest.raises(FrozenInstanceError):
+        SHORTCUTS[0].label = "changed"  # type: ignore[misc]
+
+
 def test_categories_group_contiguously() -> None:
     """Settings starts a new heading each time the category changes while
     walking `SHORTCUTS` in order, so a category that reappears after
@@ -64,6 +70,11 @@ def test_focus_mode_and_play_pause_share_space_across_scopes(
 def test_every_quick_select_slot_has_a_shortcut(bindings: ShortcutBindings) -> None:
     for slot in range(shortcuts.QUICK_SELECT_SLOT_COUNT):
         assert bindings.binding(shortcuts.quick_select_id(slot))
+
+
+def test_quick_select_ids_are_one_based() -> None:
+    for slot in range(shortcuts.QUICK_SELECT_SLOT_COUNT):
+        assert shortcuts.quick_select_id(slot) == f"tagging.quick_select_{slot + 1}"
 
 
 def test_quick_select_defaults_are_the_digit_row(bindings: ShortcutBindings) -> None:
@@ -193,6 +204,31 @@ def test_shortcut_for_finds_the_command_a_key_triggers(bindings: ShortcutBinding
 def test_shortcut_for_only_searches_the_requested_scope(bindings: ShortcutBindings) -> None:
     assert bindings.shortcut_for("Space", ShortcutScope.GLOBAL) == shortcuts.FOCUS_MODE
     assert bindings.shortcut_for("Space", ShortcutScope.VIEWER) == shortcuts.VIEWER_PLAY_PAUSE
+
+
+def test_binding_lookups_compare_equal_strings_by_value(bindings: ShortcutBindings) -> None:
+    shortcut_binding = "Ctrl+Shift+F9"
+    bindings.set_binding(shortcuts.OPEN_SETTINGS, shortcut_binding)
+    bindings.set_binding(shortcuts.quick_select_id(0), shortcut_binding)
+    equal_binding = ("!" + shortcut_binding)[1:]
+    assert equal_binding == shortcut_binding
+    assert equal_binding is not shortcut_binding
+
+    assert bindings.shortcut_for(equal_binding) == shortcuts.OPEN_SETTINGS
+    assert bindings.quick_select_slot(equal_binding) == 0
+
+
+def test_conflicts_excludes_an_equal_shortcut_id_by_value(bindings: ShortcutBindings) -> None:
+    shortcut_id = shortcuts.OPEN_COLLECTION_FOLDER
+    equal_id = ("!" + shortcut_id)[1:]
+    assert equal_id == shortcut_id
+    assert equal_id is not shortcut_id
+
+    assert bindings.conflicts(equal_id, bindings.binding(shortcut_id)) == ()
+
+
+def test_definitions_is_exposed_as_a_property(bindings: ShortcutBindings) -> None:
+    assert bindings.definitions is SHORTCUTS
 
 
 def test_conflicts_reports_another_shortcut_on_the_same_key(

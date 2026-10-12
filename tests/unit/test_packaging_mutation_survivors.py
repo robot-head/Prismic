@@ -26,14 +26,37 @@ def test_find_iscc_checks_the_documented_default_windows_location(
 def test_build_exe_skips_installer_when_inno_setup_is_missing(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    calls: list[tuple[object, ...]] = []
-    monkeypatch.setattr(_packaging.subprocess, "run", lambda *args, **_kwargs: calls.append(args))
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def record_run(*args: object, **kwargs: object) -> None:
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(_packaging.subprocess, "run", record_run)
     monkeypatch.setattr(_packaging, "_find_iscc", lambda: None)
 
     _packaging.build_exe()
 
     assert len(calls) == 1
+    assert calls[0][1]["check"] is True
     assert "Inno Setup not found" in capsys.readouterr().out
+
+
+def test_run_inno_setup_checks_the_subprocess_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def record_run(*args: object, **kwargs: object) -> None:
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(_packaging.subprocess, "run", record_run)
+
+    _packaging._run_inno_setup("ISCC.exe")
+
+    assert calls == [
+        (
+            (["ISCC.exe", "packaging/windows/prismic.iss"],),
+            {"cwd": _packaging.REPO_ROOT, "check": True},
+        )
+    ]
 
 
 def test_build_installer_reports_missing_iscc_at_the_default_path(

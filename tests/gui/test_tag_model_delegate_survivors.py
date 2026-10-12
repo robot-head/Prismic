@@ -48,9 +48,15 @@ def test_tag_model_roles_keep_their_documented_qt_user_role_offsets() -> None:
 
 def test_tag_slots_are_group_relative_capped_and_reversible(qtbot: QtBot) -> None:
     model = TagListModel()
-    tags = [Tag(id=row + 1, name=f"tag {row}") for row in range(QUICK_SELECT_SLOT_COUNT * 2 + 2)]
+    tags = [Tag(id=row + 1, name=f"tag {row}") for row in range(QUICK_SELECT_SLOT_COUNT * 2 + 4)]
     selected_ids = frozenset(tag.id for row, tag in enumerate(tags) if row % 2 == 0)
     model.set_tags(tags, selected_ids)
+
+    class EqualId(int):
+        pass
+
+    class EqualRole(int):
+        pass
 
     unchecked_ids: list[int] = []
     checked_ids: list[int] = []
@@ -60,14 +66,13 @@ def test_tag_slots_are_group_relative_capped_and_reversible(qtbot: QtBot) -> Non
         index = model.index(row, 0)
         is_checked = tag.id in selected_ids
         assert index.data(CheckedRole) is is_checked
+        assert model.row_for_tag_id(EqualId(tag.id)) == row
 
         group_ids = checked_ids if is_checked else unchecked_ids
         role = CheckedSlotRole if is_checked else UncheckedSlotRole
         expected_slot = len(group_ids) if len(group_ids) < QUICK_SELECT_SLOT_COUNT else None
         assert index.data(role) == expected_slot
-        # Integer role IDs cross Qt-facing code paths too; dispatch is by
-        # value, not Python object identity.
-        assert index.data(int(role)) == expected_slot
+        assert model.data(index, EqualRole(int(role))) == expected_slot
         group_ids.append(tag.id)
 
     for selected, ids in ((False, unchecked_ids), (True, checked_ids)):
@@ -92,10 +97,24 @@ def test_tag_model_data_rejects_a_valid_looking_index_past_the_last_row() -> Non
         def isValid(self) -> bool:
             return True
 
-        def row(self) -> int:
-            return model.rowCount() + 1
+        def __init__(self, row: int) -> None:
+            self._row = row
 
-    assert model.data(OutOfRangeIndex(), TagIdRole) is None  # type: ignore[arg-type]
+        def row(self) -> int:
+            return self._row
+
+    for row in (-1, model.rowCount()):
+        assert model.data(OutOfRangeIndex(row), TagIdRole) is None  # type: ignore[arg-type]
+    assert model.rowCount(model.index(0, 0)) == 0
+
+
+def test_tag_model_flags_allow_editing_only_for_valid_rows(qtbot: QtBot) -> None:
+    model = TagListModel()
+    model.set_tags([Tag(id=1, name="one")], frozenset())
+    expected = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable
+
+    assert model.flags(model.index(0, 0)) == expected
+    assert model.flags(model.index(-1, 0)) == Qt.ItemFlag.NoItemFlags
 
 
 def test_delegate_rects_use_the_row_geometry_and_center_the_controls(qtbot: QtBot) -> None:

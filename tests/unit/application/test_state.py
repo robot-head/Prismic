@@ -85,6 +85,13 @@ def test_current_item_moves_to_nearest_surviving_item(
     assert state.current_item == d
 
 
+def test_nearest_surviving_search_includes_the_first_item_at_any_distance() -> None:
+    state = ApplicationState(result_set=[10])
+
+    assert state._resolve_current_item([10, 20], 20) == 10
+    assert state._resolve_current_item([10, 20, 30, 40], 40) == 10
+
+
 def test_current_item_falls_back_to_first_result_when_no_neighbor_survives(
     media: MediaRepository, mappings: MappingRepository
 ) -> None:

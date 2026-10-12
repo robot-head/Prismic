@@ -31,7 +31,9 @@ def test_message_dialog_keeps_its_layout_and_minimum_width_contract(qtbot: QtBot
     assert text is not None
 
     assert dialog.minimumWidth() == 360
+    assert dialog.isModal()
     assert text.maximumWidth() == 420
+    assert text.wordWrap()
     assert outer.contentsMargins() == QMargins(0, 0, 0, 0)
     assert outer.spacing() == 0
     assert body.contentsMargins() == QMargins(20, 16, 20, 16)

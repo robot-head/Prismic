@@ -1,4 +1,7 @@
+from dataclasses import FrozenInstanceError
 from pathlib import Path
+
+import pytest
 
 from prismic.application.tag_ranking_settings import (
     DEFAULT_CORRELATION_THRESHOLD,
@@ -16,8 +19,26 @@ def _store(tmp_path: Path) -> TagRankingSettingsStore:
 def test_load_returns_defaults_when_nothing_saved(tmp_path: Path) -> None:
     settings = _store(tmp_path).load()
 
+    assert settings.correlation_threshold == 0.8
     assert settings.correlation_threshold == DEFAULT_CORRELATION_THRESHOLD
     assert settings.mega_popular_threshold == DEFAULT_MEGA_POPULAR_THRESHOLD
+
+
+def test_fraction_settings_accept_both_inclusive_boundaries(tmp_path: Path) -> None:
+    preferences = PreferencesStore(tmp_path / "preferences.json")
+    preferences.save({"tag_ranking": {"correlation_threshold": 0.0, "mega_popular_threshold": 1}})
+
+    settings = TagRankingSettingsStore(preferences).load()
+
+    assert settings.correlation_threshold == 0.0
+    assert settings.mega_popular_threshold == 1.0
+
+
+def test_settings_value_is_immutable(tmp_path: Path) -> None:
+    settings = _store(tmp_path).load()
+
+    with pytest.raises(FrozenInstanceError):
+        settings.correlation_threshold = 0.5  # type: ignore[misc]
 
 
 def test_save_then_load_round_trips(tmp_path: Path) -> None:

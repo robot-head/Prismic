@@ -1,9 +1,21 @@
 from pathlib import Path
 
+import pytest
+
 from prismic import bootstrap
 
 
-def test_run_passes_the_collection_path_to_the_initial_window(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("supplied", "expected_path"),
+    [
+        (["prismic", "trip.prismic"], Path("trip.prismic")),
+        (["prismic"], None),
+        ([], None),
+    ],
+)
+def test_run_uses_only_an_optional_second_argument_as_the_collection_path(
+    monkeypatch, supplied: list[str], expected_path: Path | None
+) -> None:
     captured: dict[str, object] = {}
 
     class _Application:
@@ -32,7 +44,6 @@ def test_run_passes_the_collection_path_to_the_initial_window(monkeypatch) -> No
         def show(self) -> None:
             captured["shown"] = True
 
-    supplied = ["prismic", "trip.prismic"]
     monkeypatch.setattr(bootstrap, "QApplication", _Application)
     monkeypatch.setattr(bootstrap, "MainWindow", _Window)
     monkeypatch.setattr(bootstrap, "QIcon", lambda _path: object())
@@ -41,7 +52,7 @@ def test_run_passes_the_collection_path_to_the_initial_window(monkeypatch) -> No
 
     assert result == 17
     assert captured["args"] is supplied
-    assert captured["initial_path"] == Path("trip.prismic")
+    assert captured["initial_path"] == expected_path
     assert captured["shown"] is True
 
 

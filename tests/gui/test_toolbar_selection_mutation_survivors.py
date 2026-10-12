@@ -36,6 +36,7 @@ class _Painter:
         self.pixmaps: list[tuple[object, QPixmap]] = []
         self.fills: list[tuple[object, object]] = []
         self.clip_paths: list[QPainterPath] = []
+        self.pens: list[object] = []
 
     def setRenderHint(self, _hint: object) -> None:
         pass
@@ -44,7 +45,7 @@ class _Painter:
         return _Pen()
 
     def setPen(self, _pen: object) -> None:
-        pass
+        self.pens.append(_pen)
 
     def setBrush(self, _brush: object) -> None:
         pass
@@ -78,8 +79,11 @@ class _EventPainter(_Painter):
     class RenderHint:
         Antialiasing = object()
 
+    last: _EventPainter | None = None
+
     def __init__(self, *_args: object) -> None:
         super().__init__()
+        _EventPainter.last = self
 
     def end(self) -> None:
         pass
@@ -134,6 +138,9 @@ def test_button_paints_inside_the_five_pixel_icon_margin(
     button.paintEvent(QPaintEvent(button.rect()))
 
     assert painted_rects[-1] == QRect(5, 5, 12, 12)
+    painter = _EventPainter.last
+    assert painter is not None
+    assert [pen.widthF() for pen in painter.pens] == [1.5]  # type: ignore[attr-defined]
 
 
 def test_toolbar_layout_keeps_its_spacing_and_side_margins(qtbot) -> None:
@@ -187,12 +194,51 @@ def test_fullscreen_icon_draws_eight_corner_arms_of_the_expected_length(qtbot) -
     ]
 
 
+def test_fullscreen_icon_keeps_a_three_pixel_minimum_arm(qtbot) -> None:
+    painter = _Painter()
+    FullScreenButton()._paint_icon(painter, QRect(0, 3, 6, 6))  # type: ignore[arg-type]
+
+    assert painter.lines == [
+        (0, 6, 0, 3),
+        (0, 3, 3, 3),
+        (2, 3, 5, 3),
+        (5, 3, 5, 6),
+        (0, 5, 0, 8),
+        (0, 8, 3, 8),
+        (2, 8, 5, 8),
+        (5, 8, 5, 5),
+    ]
+
+
+def test_fullscreen_icon_uses_addition_for_non_aligned_coordinates(qtbot) -> None:
+    painter = _Painter()
+    FullScreenButton()._paint_icon(painter, QRect(1, 3, 19, 16))  # type: ignore[arg-type]
+
+    assert painter.lines == [
+        (1, 8, 1, 3),
+        (1, 3, 6, 3),
+        (14, 3, 19, 3),
+        (19, 3, 19, 8),
+        (1, 13, 1, 18),
+        (1, 18, 6, 18),
+        (14, 18, 19, 18),
+        (19, 18, 19, 13),
+    ]
+
+
 @pytest.mark.parametrize(
     ("count", "width", "height"),
     [
         (count, width, height)
         for count in range(1, 15)
-        for width, height in ((31, 47), (97, 61), (301, 211), (401, 401))
+        for width, height in (
+            (20, 20),
+            (31, 47),
+            (97, 61),
+            (100, 30),
+            (301, 211),
+            (401, 401),
+        )
     ],
 )
 def test_grid_uses_the_candidate_with_the_largest_fitting_cell(
@@ -224,10 +270,13 @@ def test_grid_thumbnail_events_refresh_only_a_visible_item(qtbot) -> None:
     view.set_items([(4, Path("a.jpg")), (9, Path("b.jpg"))])
     updates.clear()
 
-    view._on_thumbnail_event(12)
+    view._on_thumbnail_event(8)
     assert updates == []
 
-    view._on_thumbnail_event(9)
+    class EqualId(int):
+        pass
+
+    view._on_thumbnail_event(EqualId(9))
     assert updates == [True]
 
 
@@ -274,11 +323,21 @@ def test_grid_thumbnail_dimension_uses_ceil_and_never_falls_below_one(
     assert view._required_dimension(QRectF(0, 0, 0, 0)) == 1
 
 
-def test_grid_centers_a_letterboxed_thumbnail_inside_its_cell(qtbot) -> None:
+@pytest.mark.parametrize(
+    ("source_size", "expected_point", "expected_size"),
+    [
+        ((80, 20), (10, 37.5), (200, 50)),
+        ((20, 80), (52.5, 20), (30, 120)),
+    ],
+)
+def test_grid_centers_a_letterboxed_thumbnail_inside_its_cell(
+    qtbot, monkeypatch, source_size, expected_point, expected_size
+) -> None:
     provider = ThumbnailProvider()
-    provider._cache[7] = QPixmap(80, 20)
+    provider._cache[7] = QPixmap(*source_size)
     view = SelectionGridView(provider, lambda: None)
     qtbot.addWidget(view)
+    monkeypatch.setattr(view, "devicePixelRatioF", lambda: 2.0)
     painter = _Painter()
 
     view._paint_cell(painter, QRectF(10, 20, 100, 60), 7, Path("photo.jpg"))  # type: ignore[arg-type]
@@ -288,5 +347,21 @@ def test_grid_centers_a_letterboxed_thumbnail_inside_its_cell(qtbot) -> None:
     assert painter.clip_paths == [expected_clip]
     assert len(painter.pixmaps) == 1
     point, scaled = painter.pixmaps[0]
-    assert (point.x(), point.y()) == pytest.approx((10, 37.5))  # type: ignore[attr-defined]
-    assert (scaled.width(), scaled.height()) == (100, 25)
+    assert (point.x(), point.y()) == pytest.approx(expected_point)  # type: ignore[attr-defined]
+    assert (scaled.width(), scaled.height()) == expected_size
+
+
+def test_grid_video_badge_uses_the_compact_grid_scale(qtbot, monkeypatch) -> None:
+    view = SelectionGridView(ThumbnailProvider(), lambda: None)
+    qtbot.addWidget(view)
+    badge_calls: list[tuple[QRectF, float]] = []
+    monkeypatch.setattr(
+        selection_grid_view,
+        "paint_play_badge",
+        lambda _painter, rect, *, size_fraction: badge_calls.append((rect, size_fraction)),
+    )
+    rect = QRectF(12, 15, 100, 80)
+
+    view._paint_cell(_Painter(), rect, 17, Path("clip.webm"))  # type: ignore[arg-type]
+
+    assert badge_calls == [(rect, 0.16)]

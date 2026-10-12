@@ -189,6 +189,7 @@ def test_default_image_loader_keeps_a_2048_pixel_image_at_full_size(
 def test_video_controls_are_visible_for_video_and_hidden_after_clear(qtbot: QtBot) -> None:
     viewer = MediaViewer()
     qtbot.addWidget(viewer)
+    assert viewer._controls.isHidden()
     assert (viewer._seek_slider.minimum(), viewer._seek_slider.maximum()) == (0, 0)
 
     viewer.show_media(FIXTURES_DIR / "supported_video.webm")

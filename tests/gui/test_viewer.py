@@ -74,19 +74,31 @@ def _gif(path: Path, frame_count: int) -> None:
     """A hand-assembled 1x1 GIF of `frame_count` frames (Qt can read
     animated GIFs but not write them, and there's no imaging library in
     the dev deps). Built from hex so every byte is spelled out."""
-    header = bytes.fromhex("474946383961" "0100" "0100" "80" "00" "00" "000000" "ffffff")
-    loop = bytes.fromhex("21ff0b" + b"NETSCAPE2.0".hex() + "03" "01" "0000" "00")
+    header = bytes.fromhex("47494638396101000100800000000000ffffff")
+    loop = bytes.fromhex("21ff0b" + b"NETSCAPE2.0".hex() + "0301000000")
     frame = bytes.fromhex(
-        "21f904" "00" "0500" "00" "00"  # graphic control: 50ms delay
-        "2c" "0000" "0000" "0100" "0100" "00"  # image descriptor: 1x1
-        "02" "02" "4401" "00"  # LZW data: one pixel
+        "21f904"
+        "00"
+        "0500"
+        "00"
+        "00"  # graphic control: 50ms delay
+        "2c"
+        "0000"
+        "0000"
+        "0100"
+        "0100"
+        "00"  # image descriptor: 1x1
+        "02"
+        "02"
+        "4401"
+        "00"  # LZW data: one pixel
     )
     path.write_bytes(header + loop + frame * frame_count + b";")
 
 
 def test_animated_gif_plays_in_the_image_view(qtbot: QtBot, tmp_path: Path) -> None:
     gif = tmp_path / "anim.gif"
-    _gif(gif, 2)
+    _gif(gif, 3)
     viewer = MediaViewer()
     qtbot.addWidget(viewer)
 

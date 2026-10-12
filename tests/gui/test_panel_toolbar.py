@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 
 from prismic.domain.media import Media, MediaState
+from prismic.ui import theme
 from prismic.ui.main_window import MainWindow
 
 
@@ -65,6 +66,22 @@ def test_the_toolbar_has_undo_and_redo_buttons_disabled_with_no_history(window: 
     assert not window.panel_toolbar.redo_button.isCheckable()
     assert not window.panel_toolbar.undo_button.isEnabled()
     assert not window.panel_toolbar.redo_button.isEnabled()
+
+
+def test_toolbar_icon_colors_follow_toggle_and_enabled_state(window: MainWindow) -> None:
+    toolbar = window.panel_toolbar
+
+    assert toolbar.shuffle_button._icon_color() == theme.TEXT_SECONDARY
+    toolbar.shuffle_button.setChecked(True)
+    assert toolbar.shuffle_button._icon_color() == theme.KEYCAP_BORDER
+    assert not toolbar.undo_button.isEnabled()
+    assert toolbar.undo_button._icon_color() == theme.BORDER
+    toolbar.undo_button.setEnabled(True)
+    assert toolbar.undo_button._icon_color() == theme.TEXT_SECONDARY
+    toolbar.undo_button.setEnabled(False)
+    assert toolbar.undo_button._icon_color() == theme.BORDER
+    toolbar.undo_button.setEnabled(False)
+    assert toolbar.undo_button._icon_color() == theme.BORDER
 
 
 def test_a_tag_change_enables_undo_and_a_click_reverts_it(

@@ -1,18 +1,25 @@
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QMessageBox, QScrollArea, QWidget
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QIntValidator, QKeyEvent
+from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton, QScrollArea, QWidget
 from pytestqt.qtbot import QtBot
 
 from prismic.application.input import shortcuts
 from prismic.application.input.shortcuts import SHORTCUTS, ShortcutBindings
+from prismic.application.tag_ranking_settings import (
+    DEFAULT_MEGA_POPULAR_THRESHOLD,
+    TagRankingSettingsStore,
+)
 from prismic.persistence.preferences import PreferencesStore
 from prismic.ui.frameless_dialog import MessageDialog, SizeGrip
 from prismic.ui.settings_dialog import (
     KeyCaptureButton,
     SettingsDialog,
     ShortcutRow,
+    TagRankingPanel,
+    ThresholdRow,
     binding_display,
 )
 
@@ -370,6 +377,22 @@ def test_restore_all_defaults_resets_every_shortcut(
     assert all(bindings.is_default(definition.id) for definition in SHORTCUTS)
 
 
+def test_declining_restore_all_defaults_keeps_existing_bindings(
+    qtbot: QtBot,
+    dialog: SettingsDialog,
+    bindings: ShortcutBindings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bindings.set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "F5")
+    monkeypatch.setattr(
+        MessageDialog, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Cancel
+    )
+
+    qtbot.mouseClick(dialog.shortcuts_panel._restore_button, Qt.MouseButton.LeftButton)
+
+    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "F5"
+
+
 # -- Conflicts ---------------------------------------------------------------------
 
 
@@ -448,6 +471,282 @@ def test_the_dialog_reports_every_change_so_the_app_can_re_apply_it(
 def test_binding_display_spells_out_an_unbound_shortcut() -> None:
     assert binding_display("") == "Not set"
     assert binding_display("Ctrl+R") == "Ctrl + R"
+
+
+def test_binding_display_distinguishes_a_modifier_tap_from_a_hold() -> None:
+    assert binding_display("Ctrl") == "Ctrl (tapped alone)"
+    assert binding_display("Ctrl", held=True) == "Ctrl (held)"
+
+
+def test_capture_button_defaults_to_a_tapped_modifier_display() -> None:
+    button = KeyCaptureButton(parent=None)
+    button.set_binding("Ctrl")
+
+    assert button.text() == "Ctrl (tapped alone)"
+
+
+def test_binding_display_accepts_binding_as_a_keyword_argument() -> None:
+    assert binding_display(binding="Ctrl+R") == "Ctrl + R"
+
+
+def test_unset_indicator_tracks_binding_and_capture_state(
+    qtbot: QtBot, dialog: SettingsDialog, bindings: ShortcutBindings
+) -> None:
+    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
+    assert isinstance(button, KeyCaptureButton)
+    assert button.property("unset") is False
+
+    bindings.set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "")
+    dialog.shortcuts_panel.refresh()
+    assert button.property("unset") is True
+
+    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    assert button.property("unset") is False
+
+
+def test_search_keeps_a_category_header_for_its_single_matching_row(dialog: SettingsDialog) -> None:
+    panel = dialog.shortcuts_panel
+    assert panel.search_box.isClearButtonEnabled()
+    assert not panel._empty_label.isVisibleTo(panel)
+    panel.search_box.setText("Previous file (works while typing)")
+
+    assert [row.definition.id for row in panel.visible_rows()] == [
+        shortcuts.NAVIGATE_PREVIOUS_WHILE_TYPING
+    ]
+    assert panel._headers["Navigation"].isVisibleTo(panel)
+    assert not panel._empty_label.isVisibleTo(panel)
+
+    panel.search_box.setText("nothing matches this")
+    assert panel._empty_label.isVisibleTo(panel)
+    assert not any(header.isVisibleTo(panel) for header in panel._headers.values())
+
+
+def test_shortcut_override_is_accepted_while_capturing(
+    qtbot: QtBot, dialog: SettingsDialog
+) -> None:
+    button = start_capture(qtbot, dialog)
+    event = QKeyEvent(
+        QEvent.Type.ShortcutOverride,
+        Qt.Key.Key_T,
+        Qt.KeyboardModifier.ControlModifier,
+    )
+    event.ignore()
+
+    assert button.event(event)
+    assert event.isAccepted()
+    assert button.is_capturing
+
+
+def test_bare_modifier_press_and_release_are_consumed_as_a_binding(
+    qtbot: QtBot, dialog: SettingsDialog, bindings: ShortcutBindings
+) -> None:
+    button = start_capture(qtbot, dialog)
+    press = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Alt, Qt.KeyboardModifier.NoModifier)
+    press.ignore()
+
+    assert button.event(press)
+    assert button.is_capturing
+
+    release = QKeyEvent(
+        QEvent.Type.KeyRelease,
+        Qt.Key.Key_Alt,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    release.ignore()
+    assert button.event(release)
+    assert not button.is_capturing
+    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Alt"
+
+
+@pytest.mark.parametrize("unrelated_key", [Qt.Key.Key_Shift, Qt.Key.Key_Alt])
+def test_unrelated_modifier_release_does_not_bind_the_pending_modifier(
+    qtbot: QtBot,
+    dialog: SettingsDialog,
+    bindings: ShortcutBindings,
+    unrelated_key: Qt.Key,
+) -> None:
+    button = start_capture(qtbot, dialog)
+    button._pending_modifier = int(Qt.Key.Key_Control)
+    release = QKeyEvent(QEvent.Type.KeyRelease, unrelated_key, Qt.KeyboardModifier.NoModifier)
+    release.ignore()
+
+    assert button.event(release)
+    assert button.is_capturing
+    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
+
+
+def test_release_without_a_pending_modifier_is_consumed_without_binding(
+    qtbot: QtBot, dialog: SettingsDialog, bindings: ShortcutBindings
+) -> None:
+    button = start_capture(qtbot, dialog)
+    release = QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_F5, Qt.KeyboardModifier.NoModifier)
+    release.ignore()
+
+    assert button.event(release)
+    assert button.is_capturing
+    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
+
+
+def test_auto_repeat_modifier_release_does_not_finish_capture(
+    qtbot: QtBot, dialog: SettingsDialog, bindings: ShortcutBindings
+) -> None:
+    button = start_capture(qtbot, dialog)
+    button._pending_modifier = int(Qt.Key.Key_Control)
+    event = QKeyEvent(
+        QEvent.Type.KeyRelease,
+        Qt.Key.Key_Control,
+        Qt.KeyboardModifier.NoModifier,
+        "",
+        True,
+    )
+
+    assert button.event(event)
+    assert button.is_capturing
+    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
+
+
+def test_threshold_row_limits_percent_input_and_resets_changed_values(
+    qtbot: QtBot,
+) -> None:
+    row = ThresholdRow("Threshold", "Description", default_fraction=0.5)
+    qtbot.addWidget(row)
+    validator = row._editor.validator()
+
+    assert isinstance(validator, QIntValidator)
+    assert (validator.bottom(), validator.top()) == (1, 100)
+    assert row._editor.minimumWidth() == row._editor.maximumWidth() == 50
+    row_layout = row.layout()
+    assert row_layout is not None
+    assert row_layout.getContentsMargins() == (10, 8, 10, 8)
+    assert row_layout.spacing() == 10
+    assert row_layout.count() == 4
+    text_layout = row_layout.itemAt(0).layout()
+    assert text_layout is not None
+    assert text_layout.getContentsMargins() == (0, 0, 0, 0)
+    assert text_layout.spacing() == 2
+    assert text_layout.itemAt(1).widget().wordWrap()
+    assert row_layout.stretch(0) == 1
+
+    row.set_fraction(0.8)
+    with qtbot.waitSignal(row.changed):
+        row._reset_button.click()
+    assert row.fraction == 0.5
+
+
+def test_threshold_row_does_not_emit_for_an_equal_default_value(qtbot: QtBot) -> None:
+    default = 0.35
+    row = ThresholdRow("Threshold", "Description", default_fraction=default)
+    qtbot.addWidget(row)
+    row.set_fraction(float(str(default)))
+    assert not row._reset_button.isEnabled()
+
+    with qtbot.assertNotEmitted(row.changed):
+        row._reset()
+
+
+def test_tag_ranking_panel_persists_edits_and_emits_change(qtbot: QtBot, tmp_path: Path) -> None:
+    store = TagRankingSettingsStore(PreferencesStore(tmp_path / "preferences.json"))
+    panel = TagRankingPanel(store)
+    qtbot.addWidget(panel)
+
+    panel.correlation_row._editor.setText("60")
+    with qtbot.waitSignal(panel.changed):
+        panel.correlation_row._commit()
+
+    saved = store.load()
+    assert saved.correlation_threshold == 0.6
+    assert saved.mega_popular_threshold == DEFAULT_MEGA_POPULAR_THRESHOLD
+
+
+def test_settings_dialog_starts_on_shortcuts_and_switches_panels(dialog: SettingsDialog) -> None:
+    assert dialog.panel_list.currentRow() == 0
+    assert dialog._stack.currentWidget() is dialog.shortcuts_panel
+
+    dialog.panel_list.setCurrentRow(1)
+    assert dialog._stack.currentWidget() is dialog.tag_ranking_panel
+
+
+def test_settings_layout_preserves_row_and_panel_geometry(dialog: SettingsDialog) -> None:
+    shortcut_row = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)
+    row_layout = shortcut_row.layout()
+    assert row_layout is not None
+    assert row_layout.getContentsMargins() == (10, 8, 10, 8)
+    assert row_layout.spacing() == 10
+    text_layout = row_layout.itemAt(0).layout()
+    assert text_layout is not None
+    assert text_layout.getContentsMargins() == (0, 0, 0, 0)
+    assert text_layout.spacing() == 2
+    assert row_layout.stretch(0) == 1
+    assert shortcut_row._editor.minimumWidth() == shortcut_row._editor.maximumWidth() == 180
+
+    shortcuts_layout = dialog.shortcuts_panel.layout()
+    assert shortcuts_layout is not None
+    assert shortcuts_layout.getContentsMargins() == (12, 12, 12, 12)
+    assert shortcuts_layout.spacing() == 10
+    assert shortcuts_layout.stretch(2) == 1
+    scroll = dialog.shortcuts_panel.findChild(QScrollArea, "settingsScroll")
+    assert scroll is not None and scroll.widget() is not None
+    assert scroll.widgetResizable()
+    content_layout = scroll.widget().layout()
+    assert content_layout is not None
+    assert content_layout.getContentsMargins() == (0, 0, 8, 0)
+    assert content_layout.spacing() == 0
+    assert content_layout.stretch(content_layout.count() - 1) == 1
+    assert all(
+        separator.minimumHeight() == separator.maximumHeight() == 1
+        for separator in dialog.shortcuts_panel._separators_by_row.values()
+    )
+
+    footer_layout = shortcuts_layout.itemAt(3).layout()
+    assert footer_layout is not None
+    assert footer_layout.getContentsMargins() == (0, 0, 0, 0)
+    assert footer_layout.stretch(1) == 1
+    assert dialog.panel_list.width() == 150
+    assert dialog.size().width() == 760
+    assert dialog.size().height() == 620
+
+    ranking_layout = dialog.tag_ranking_panel.layout()
+    assert ranking_layout is not None
+    assert ranking_layout.getContentsMargins() == (12, 12, 12, 12)
+    assert ranking_layout.spacing() == 0
+    assert ranking_layout.stretch(3) == 1
+
+    dialog_layout = dialog.layout()
+    assert dialog_layout is not None
+    assert dialog_layout.getContentsMargins() == (0, 0, 0, 0)
+    assert dialog_layout.spacing() == 0
+    assert dialog_layout.stretch(1) == 1
+    body_layout = dialog_layout.itemAt(1).layout()
+    assert body_layout is not None
+    assert body_layout.getContentsMargins() == (0, 0, 0, 0)
+    assert body_layout.spacing() == 0
+    assert body_layout.stretch(1) == 1
+
+    close_button = next(
+        button for button in dialog.findChildren(QPushButton) if button.text() == "Close"
+    )
+    assert close_button.isDefault()
+
+    footer_widget = dialog_layout.itemAt(2).widget()
+    assert footer_widget is not None and footer_widget.layout() is not None
+    assert footer_widget.layout().stretch(0) == 1
+
+
+def test_shortcut_rows_wrap_text_and_hide_conflicts_until_needed(dialog: SettingsDialog) -> None:
+    row = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)
+    assert row._description.wordWrap()
+    assert row._conflict.wordWrap()
+    assert not row._conflict.isVisibleTo(dialog)
+
+
+def test_settings_dialog_uses_the_injected_tag_ranking_store(
+    qtbot: QtBot, bindings: ShortcutBindings, tmp_path: Path
+) -> None:
+    store = TagRankingSettingsStore(PreferencesStore(tmp_path / "preferences.json"))
+    dialog = SettingsDialog(bindings, tag_ranking_settings=store)
+    qtbot.addWidget(dialog)
+
+    assert dialog.tag_ranking_panel._store is store
 
 
 # -- Window chrome -----------------------------------------------------------
