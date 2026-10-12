@@ -66,6 +66,17 @@ def _render(delegate: ThumbnailDelegate, *, name: str = "photo.jpg", state=None)
     return image
 
 
+def _light_ink_x_positions(image: QImage) -> list[int]:
+    return [
+        x
+        for y in range(image.height())
+        for x in range(image.width())
+        if image.pixelColor(x, y).red() > 180
+        and image.pixelColor(x, y).green() > 180
+        and image.pixelColor(x, y).blue() > 180
+    ]
+
+
 def _striped_pixmap(*, horizontal: bool) -> QPixmap:
     pixmap = QPixmap(48, 96) if horizontal else QPixmap(96, 48)
     pixmap.fill(QColor("#e02020"))
@@ -198,30 +209,16 @@ def test_filename_starts_after_thumbnail_and_uses_the_remaining_row_width(qtbot:
     delegate.show_thumbnails = True
 
     image = _render(delegate, name="M" * 80 + ".jpg")
-    ink = [
-        (x, y)
-        for y in range(image.height())
-        for x in range(image.width())
-        if image.pixelColor(x, y).red() > 180
-        and image.pixelColor(x, y).green() > 180
-        and image.pixelColor(x, y).blue() > 180
-    ]
+    ink = _light_ink_x_positions(image)
 
     assert ink
-    assert min(x for x, _ in ink) >= 78
-    assert max(x for x, _ in ink) < 302
+    assert min(ink) >= 78
+    assert max(ink) < 302
 
 
 def test_filename_starts_at_the_row_margin_when_thumbnails_are_hidden(qtbot: QtBot) -> None:
     image = _render(_delegate(_Provider()), name="M" * 30)
-    ink = [
-        x
-        for y in range(image.height())
-        for x in range(image.width())
-        if image.pixelColor(x, y).red() > 180
-        and image.pixelColor(x, y).green() > 180
-        and image.pixelColor(x, y).blue() > 180
-    ]
+    ink = _light_ink_x_positions(image)
 
     assert ink
     assert min(ink) >= 18

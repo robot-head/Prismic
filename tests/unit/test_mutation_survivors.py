@@ -15,6 +15,16 @@ from prismic.application.worker_pool import WorkerPool
 from prismic.domain.tag import Tag
 
 
+def _recency_order_after(elapsed_seconds: float) -> list[Tag]:
+    clock = [0.0]
+    tracker = TagRecencyTracker(_clock=lambda: clock[0])
+    clicked = Tag(id=3, name="clicked")
+    other = Tag(id=1, name="other")
+    tracker.record_click(clicked.id)
+    clock[0] = elapsed_seconds
+    return tracker.order([other, clicked])
+
+
 def test_quick_select_definitions_number_every_slot_and_explain_typing_once() -> None:
     for slot in range(QUICK_SELECT_SLOT_COUNT):
         item = definition(quick_select_id(slot))
@@ -27,36 +37,21 @@ def test_quick_select_definitions_number_every_slot_and_explain_typing_once() ->
 
 
 def test_recency_window_keeps_a_one_second_old_click_recent() -> None:
-    clock = [0.0]
-    tracker = TagRecencyTracker(_clock=lambda: clock[0])
-    clicked = Tag(id=3, name="clicked")
-    other = Tag(id=1, name="other")
-    tracker.record_click(clicked.id)
-    clock[0] = 1.0
+    clicked, other = Tag(id=3, name="clicked"), Tag(id=1, name="other")
 
-    assert tracker.order([other, clicked]) == [clicked, other]
+    assert _recency_order_after(1.0) == [clicked, other]
 
 
 def test_expired_recency_returns_to_the_callers_order() -> None:
-    clock = [0.0]
-    tracker = TagRecencyTracker(_clock=lambda: clock[0])
-    clicked = Tag(id=3, name="clicked")
-    other = Tag(id=1, name="other")
-    tracker.record_click(clicked.id)
-    clock[0] = 30 * 60 + 1
+    clicked, other = Tag(id=3, name="clicked"), Tag(id=1, name="other")
 
-    assert tracker.order([other, clicked]) == [other, clicked]
+    assert _recency_order_after(30 * 60 + 1) == [other, clicked]
 
 
 def test_recency_window_includes_the_exact_boundary() -> None:
-    clock = [0.0]
-    tracker = TagRecencyTracker(_clock=lambda: clock[0])
-    clicked = Tag(id=3, name="clicked")
-    other = Tag(id=1, name="other")
-    tracker.record_click(clicked.id)
-    clock[0] = 30 * 60
+    clicked, other = Tag(id=3, name="clicked"), Tag(id=1, name="other")
 
-    assert tracker.order([other, clicked]) == [clicked, other]
+    assert _recency_order_after(30 * 60) == [clicked, other]
 
 
 def test_current_item_fallback_uses_the_first_new_result() -> None:
