@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from prismic.persistence.preferences import (
     PreferencesStore,
     preferences_directory,
@@ -41,19 +43,15 @@ def test_store_creates_the_preferences_directory_on_first_save(tmp_path: Path) -
     assert store.path.exists()
 
 
-def test_store_treats_a_corrupt_file_as_empty(tmp_path: Path) -> None:
-    """Preferences are conveniences, not authoritative data -- a file
-    mangled by a hand edit costs the user their settings, but must not
-    stop the app from starting."""
+@pytest.mark.parametrize(
+    "contents",
+    ["{ this is not json", "[1, 2, 3]"],
+    ids=["corrupt-json", "non-object"],
+)
+def test_store_treats_invalid_or_non_object_files_as_empty(tmp_path: Path, contents: str) -> None:
+    """Invalid preferences are conveniences, not authoritative data."""
     path = tmp_path / "preferences.json"
-    path.write_text("{ this is not json", encoding="utf-8")
-
-    assert PreferencesStore(path).load() == {}
-
-
-def test_store_treats_a_non_object_file_as_empty(tmp_path: Path) -> None:
-    path = tmp_path / "preferences.json"
-    path.write_text("[1, 2, 3]", encoding="utf-8")
+    path.write_text(contents, encoding="utf-8")
 
     assert PreferencesStore(path).load() == {}
 

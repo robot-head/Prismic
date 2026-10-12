@@ -38,7 +38,7 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPaintEvent
 from PySide6.QtWidgets import QWidget
 
 from prismic.ui import theme
-from prismic.ui._thumbnail_badge import paint_play_badge
+from prismic.ui._thumbnail_badge import paint_thumbnail
 from prismic.ui.thumbnail_services import ThumbnailServices
 
 _MARGIN = 12
@@ -103,6 +103,8 @@ class SelectionGridView(QWidget):
         pixmap = self._thumbnails.provider.get(media_id)
         is_video = self._thumbnails.is_video(path)
 
+        scaled = None
+        position = None
         if pixmap is not None:
             ratio = self.devicePixelRatioF()
             # Scale to the cell's *physical* pixel size (logical size times
@@ -123,13 +125,18 @@ class SelectionGridView(QWidget):
             logical_size = scaled.deviceIndependentSize()
             x_off = rect.x() + (rect.width() - logical_size.width()) / 2
             y_off = rect.y() + (rect.height() - logical_size.height()) / 2
-            painter.drawPixmap(QPointF(x_off, y_off), scaled)
-        else:
-            painter.fillRect(rect, QColor(theme.THUMB_PLACEHOLDER))
+            position = QPointF(x_off, y_off)
 
-        if is_video:
-            paint_play_badge(painter, rect, size_fraction=0.16)
-        elif not self._thumbnails.provider.has_failed(media_id):
+        paint_thumbnail(
+            painter,
+            rect,
+            scaled,
+            position,
+            is_video=is_video,
+            size_fraction=0.16,
+        )
+
+        if not is_video and not self._thumbnails.provider.has_failed(media_id):
             # Requested every paint, not just when `pixmap is None`: a cell
             # that already has a thumbnail may still be under-resolution
             # for its *current* size (the window grew, or the selection

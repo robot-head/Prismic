@@ -17,6 +17,20 @@ from prismic.ui.thumbnail_provider import ThumbnailProvider
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "media"
 
 
+def make_provider_and_pool(*, dimension: int | None = None) -> tuple[ThumbnailProvider, WorkerPool]:
+    provider = ThumbnailProvider() if dimension is None else ThumbnailProvider(dimension=dimension)
+    return provider, WorkerPool()
+
+
+def _provider_pool_and_path(dimension: int) -> tuple[ThumbnailProvider, WorkerPool, Path]:
+    provider, pool = make_provider_and_pool(dimension=dimension)
+    return (
+        provider,
+        pool,
+        FIXTURES_DIR / "supported_image.png",
+    )
+
+
 def _load_thumbnail(
     qtbot: QtBot,
     provider: ThumbnailProvider,
@@ -32,9 +46,7 @@ def _load_thumbnail(
 
 
 def test_a_second_request_at_a_larger_dimension_replaces_the_cached_pixmap(qtbot: QtBot) -> None:
-    provider = ThumbnailProvider(dimension=32)
-    pool = WorkerPool()
-    path = FIXTURES_DIR / "supported_image.png"
+    provider, pool, path = _provider_pool_and_path(dimension=32)
 
     small = _load_thumbnail(qtbot, provider, pool, path, dimension=32)
 
@@ -53,9 +65,7 @@ def test_a_second_request_at_a_larger_dimension_replaces_the_cached_pixmap(qtbot
 
 
 def test_a_second_request_at_a_smaller_dimension_is_a_no_op(qtbot: QtBot) -> None:
-    provider = ThumbnailProvider(dimension=512)
-    pool = WorkerPool()
-    path = FIXTURES_DIR / "supported_image.png"
+    provider, pool, path = _provider_pool_and_path(dimension=512)
 
     large = _load_thumbnail(qtbot, provider, pool, path, dimension=512)
 
@@ -71,9 +81,7 @@ def test_a_second_request_at_a_smaller_dimension_is_a_no_op(qtbot: QtBot) -> Non
 
 
 def test_reset_clears_the_remembered_decode_size_too(qtbot: QtBot) -> None:
-    provider = ThumbnailProvider(dimension=512)
-    pool = WorkerPool()
-    path = FIXTURES_DIR / "supported_image.png"
+    provider, pool, path = _provider_pool_and_path(dimension=512)
 
     _load_thumbnail(qtbot, provider, pool, path, dimension=512)
 

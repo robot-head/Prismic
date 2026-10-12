@@ -1,12 +1,12 @@
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QWheelEvent
+from PySide6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 
 from prismic.media.image import ImageLoadError, load_image
 from prismic.ui.image_view import ImageView
+from tests.gui._mutation_helpers import wheel_event
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "media"
 
@@ -54,16 +54,7 @@ def test_wheel_event_zooms_by_delta_direction(
 ) -> None:
     view = _loaded_view(qtbot)
 
-    event = QWheelEvent(
-        QPoint(10, 10).toPointF(),
-        QPoint(10, 10).toPointF(),
-        QPoint(0, 0),
-        QPoint(0, delta),
-        Qt.MouseButton.NoButton,
-        Qt.KeyboardModifier.NoModifier,
-        Qt.ScrollPhase.NoScrollPhase,
-        False,
-    )
+    event = wheel_event(delta)
     view.wheelEvent(event)
 
     assert view.zoom == expected_zoom

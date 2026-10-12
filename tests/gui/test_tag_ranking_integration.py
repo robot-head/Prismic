@@ -5,17 +5,22 @@ real (temp) collection -- not just the pure `tag_ranking.promote_ranked_tags`
 unit tests, which never touch the DB, settings store, or panel wiring.
 """
 
+from __future__ import annotations
+
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from pytestqt.qtbot import QtBot
 
-from prismic.application.session import PrismicSession
 from prismic.application.tag_ranking_settings import TagRankingSettingsStore
 from prismic.persistence.preferences import PreferencesStore
 from prismic.ui.main_window import MainWindow
 from tests.gui.helpers import checked_tag_names, open_and_wait
+
+if TYPE_CHECKING:
+    from prismic.application.session import PrismicSession
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "media"
 

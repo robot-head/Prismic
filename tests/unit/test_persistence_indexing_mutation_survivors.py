@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import os
 import sqlite3
 import stat
-import sys
 from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,15 +24,56 @@ from prismic.indexing.reconciler import (
     run_reconciliation,
 )
 from prismic.indexing.scanner import ScannedFile
-from prismic.persistence import lockfile, migrations, preferences
+from prismic.persistence import migrations, preferences
 from prismic.persistence.database import connect
 from prismic.persistence.errors import SchemaMigrationError
 from prismic.persistence.repositories.media_repository import MediaRepository
 from prismic.persistence.repositories.tag_repository import TagRepository
+from tests._reconciliation_test_context import ReconciliationTestContext
+from tests.unit._lockfile_helpers import load_windows_lockfile
 
 
 def _hashed_file(relative_path: str, content_hash: str) -> HashedFile:
     return HashedFile(relative_path, content_hash, size=1, mtime=10.5)
+
+
+def _reconcile_with_files(
+    connection: sqlite3.Connection, reconciler: Reconciler, files: list[HashedFile]
+) -> ReconciliationResult:
+    return reconciler.reconcile(connection, reconciler.begin_scan(), files)
+
+
+def _two_media_records(
+    connection: sqlite3.Connection,
+    first: tuple[str, str, float],
+    second: tuple[str, str, float],
+) -> tuple[MediaRepository, Media, Media, Reconciler]:
+    repository = MediaRepository(connection)
+    first_record = repository.create(first[0], first[1], 1, first[2], MediaState.ACTIVE)
+    second_record = repository.create(second[0], second[1], 1, second[2], MediaState.ACTIVE)
+    return repository, first_record, second_record, Reconciler()
+
+
+def _active_record(
+    repository: MediaRepository, relative_path: str, content_hash: str, mtime: float = 1.5
+) -> Media:
+    return repository.create(relative_path, content_hash, 1, mtime, MediaState.ACTIVE)
+
+
+def _repository_and_reconciler(
+    connection: sqlite3.Connection,
+) -> tuple[MediaRepository, Reconciler]:
+    return MediaRepository(connection), Reconciler()
+
+
+def _outcome_counts(result: ReconciliationResult) -> tuple[int, int, int, int, int]:
+    return (
+        result.new_count,
+        result.unchanged_count,
+        result.changed_count,
+        result.moved_count,
+        result.missing_count,
+    )
 
 
 class _DirectoryEntry:
@@ -60,9 +99,24 @@ class _DirectoryEntry:
         return SimpleNamespace(st_size=1, st_mtime=1.5)
 
 
-def test_cached_hash_is_rejected_for_non_active_records() -> None:
-    scanned = ScannedFile("photo.jpg", Path("photo.jpg"), size=1024, mtime=10.5)
-    recorded = Media(1, "photo.jpg", "old", 1024, 10.5, MediaState.MISSING)
+@pytest.mark.parametrize(
+    ("state", "scanned_size", "recorded_size", "scanned_mtime", "recorded_mtime"),
+    [
+        (MediaState.MISSING, 1024, 1024, 10.5, 10.5),
+        (MediaState.ACTIVE, 512, 1024, 10.5, 10.5),
+        (MediaState.ACTIVE, 1024, 1024, 10.5, 10.75),
+    ],
+    ids=["non-active-record", "smaller-file", "older-record-mtime"],
+)
+def test_cached_hash_is_rejected_for_inactive_or_changed_records(
+    state: MediaState,
+    scanned_size: int,
+    recorded_size: int,
+    scanned_mtime: float,
+    recorded_mtime: float,
+) -> None:
+    scanned = ScannedFile("photo.jpg", Path("photo.jpg"), scanned_size, scanned_mtime)
+    recorded = Media(1, "photo.jpg", "old", recorded_size, recorded_mtime, state)
 
     assert _recorded_hash_if_unchanged(scanned, recorded, now=100.0) is None
 
@@ -78,20 +132,6 @@ def test_cached_hash_size_comparison_uses_value_equality() -> None:
     assert _recorded_hash_if_unchanged(scanned, recorded, now=100.0) == "same"
 
 
-def test_cached_hash_rejects_a_smaller_replacement_file() -> None:
-    scanned = ScannedFile("photo.jpg", Path("photo.jpg"), size=512, mtime=10.5)
-    recorded = Media(1, "photo.jpg", "old", 1024, 10.5, MediaState.ACTIVE)
-
-    assert _recorded_hash_if_unchanged(scanned, recorded, now=100.0) is None
-
-
-def test_cached_hash_rejects_an_older_replacement_mtime() -> None:
-    scanned = ScannedFile("photo.jpg", Path("photo.jpg"), size=1024, mtime=10.5)
-    recorded = Media(1, "photo.jpg", "old", 1024, 10.75, MediaState.ACTIVE)
-
-    assert _recorded_hash_if_unchanged(scanned, recorded, now=100.0) is None
-
-
 def test_recent_mtime_cutoff_is_strict() -> None:
     scanned = ScannedFile("photo.jpg", Path("photo.jpg"), size=1024, mtime=98.125)
     recorded = Media(1, "photo.jpg", "same", 1024, 98.125, MediaState.ACTIVE)
@@ -102,24 +142,17 @@ def test_recent_mtime_cutoff_is_strict() -> None:
 def test_reconciliation_result_count_defaults_are_zero() -> None:
     result = ReconciliationResult(applied=False)
 
-    assert (
-        result.new_count,
-        result.unchanged_count,
-        result.changed_count,
-        result.moved_count,
-        result.missing_count,
-    ) == (0, 0, 0, 0, 0)
+    assert _outcome_counts(result) == (0, 0, 0, 0, 0)
 
 
 def test_reconciliation_reports_each_outcome_count(
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    repository = MediaRepository(migrated_connection)
-    unchanged = repository.create("unchanged.jpg", "same", 1, 1.5, MediaState.ACTIVE)
-    changed = repository.create("changed.jpg", "old", 1, 2.5, MediaState.ACTIVE)
-    moved = repository.create("old-location.jpg", "move", 1, 3.5, MediaState.ACTIVE)
-    missing = repository.create("absent.jpg", "absent", 1, 4.5, MediaState.ACTIVE)
-    reconciler = Reconciler()
+    repository, reconciler = _repository_and_reconciler(migrated_connection)
+    unchanged = _active_record(repository, "unchanged.jpg", "same")
+    changed = _active_record(repository, "changed.jpg", "old", 2.5)
+    moved = _active_record(repository, "old-location.jpg", "move", 3.5)
+    missing = _active_record(repository, "absent.jpg", "absent", 4.5)
     generation = reconciler.begin_scan()
 
     result = reconciler.reconcile(
@@ -134,13 +167,7 @@ def test_reconciliation_reports_each_outcome_count(
     )
 
     assert result.applied
-    assert (
-        result.new_count,
-        result.unchanged_count,
-        result.changed_count,
-        result.moved_count,
-        result.missing_count,
-    ) == (1, 1, 1, 1, 1)
+    assert _outcome_counts(result) == (1, 1, 1, 1, 1)
     after = repository.list_all()
     assert repository.get(unchanged.id) == unchanged
     assert repository.get(changed.id).state is MediaState.MISSING  # type: ignore[union-attr]
@@ -152,10 +179,9 @@ def test_reconciliation_reports_each_outcome_count(
 def test_unreadable_path_does_not_stop_later_missing_paths_from_being_marked(
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    repository = MediaRepository(migrated_connection)
-    unreadable = repository.create("a-unreadable.jpg", "a", 1, 1.5, MediaState.ACTIVE)
-    absent = repository.create("b-absent.jpg", "b", 1, 2.5, MediaState.ACTIVE)
-    reconciler = Reconciler()
+    repository, reconciler = _repository_and_reconciler(migrated_connection)
+    unreadable = _active_record(repository, "a-unreadable.jpg", "a")
+    absent = _active_record(repository, "b-absent.jpg", "b", 2.5)
     generation = reconciler.begin_scan()
 
     result = reconciler.reconcile(
@@ -173,15 +199,14 @@ def test_unreadable_path_does_not_stop_later_missing_paths_from_being_marked(
 def test_ambiguous_reverse_move_does_not_relink_one_of_two_candidates(
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    repository = MediaRepository(migrated_connection)
-    first = repository.create("first.jpg", "shared", 1, 1.5, MediaState.ACTIVE)
-    second = repository.create("second.jpg", "shared", 1, 2.5, MediaState.ACTIVE)
-    reconciler = Reconciler()
-
-    result = reconciler.reconcile(
+    repository, first, second, reconciler = _two_media_records(
         migrated_connection,
-        reconciler.begin_scan(),
-        [_hashed_file("new.jpg", "shared")],
+        ("first.jpg", "shared", 1.5),
+        ("second.jpg", "shared", 2.5),
+    )
+
+    result = _reconcile_with_files(
+        migrated_connection, reconciler, [_hashed_file("new.jpg", "shared")]
     )
 
     assert result.moved_count == 0
@@ -194,15 +219,14 @@ def test_ambiguous_reverse_move_does_not_relink_one_of_two_candidates(
 def test_relinked_record_does_not_hide_later_missing_records(
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    repository = MediaRepository(migrated_connection)
-    moved = repository.create("a-old.jpg", "move", 1, 1.5, MediaState.ACTIVE)
-    absent = repository.create("z-absent.jpg", "absent", 1, 2.5, MediaState.ACTIVE)
-    reconciler = Reconciler()
-
-    result = reconciler.reconcile(
+    repository, moved, absent, reconciler = _two_media_records(
         migrated_connection,
-        reconciler.begin_scan(),
-        [_hashed_file("b-new.jpg", "move")],
+        ("a-old.jpg", "move", 1.5),
+        ("z-absent.jpg", "absent", 2.5),
+    )
+
+    result = _reconcile_with_files(
+        migrated_connection, reconciler, [_hashed_file("b-new.jpg", "move")]
     )
 
     assert result.moved_count == 1
@@ -234,12 +258,10 @@ def test_failed_reconciliation_rolls_back_earlier_updates(
 
 
 def test_completed_hash_is_reported_before_the_scan_walk_finishes(
-    tmp_path: Path,
-    migrated_connection: sqlite3.Connection,
-    monkeypatch: pytest.MonkeyPatch,
+    reconciliation_test_context: ReconciliationTestContext,
 ) -> None:
-    collection = Collection(tmp_path, tmp_path / "collection.prismic")
-    scanned_file = ScannedFile("photo.jpg", tmp_path / "photo.jpg", size=1, mtime=1.5)
+    context = reconciliation_test_context
+    scanned_file = ScannedFile("photo.jpg", context.root / "photo.jpg", size=1, mtime=1.5)
     progress: list[tuple[int, int]] = []
 
     class _ImmediateExecutor:
@@ -261,15 +283,15 @@ def test_completed_hash_is_reported_before_the_scan_walk_finishes(
         yield scanned_file
         assert progress == [(1, 0)]
 
-    monkeypatch.setattr(reconciler_module, "ThreadPoolExecutor", _ImmediateExecutor)
-    monkeypatch.setattr(reconciler_module, "scan", scan_before_second_yield)
+    context.monkeypatch.setattr(reconciler_module, "ThreadPoolExecutor", _ImmediateExecutor)
+    context.monkeypatch.setattr(reconciler_module, "scan", scan_before_second_yield)
     reconciler = Reconciler()
 
     result = run_reconciliation(
         reconciler,
-        collection,
+        context.collection,
         reconciler.begin_scan(),
-        migrated_connection,
+        context.connection,
         on_progress=lambda processed, total: progress.append((processed, total)),
     )
 
@@ -388,14 +410,7 @@ def test_windows_collection_lock_uses_a_byte_outside_sqlite_lock_ranges(
         LK_UNLCK=2,
         locking=lambda fd, mode, count: calls.append((fd, mode, count)),
     )
-    monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
-    spec = importlib.util.spec_from_file_location(
-        "_test_prismic_windows_lockfile", lockfile.__file__
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_windows_lockfile(monkeypatch, "win32", fake_msvcrt)
 
     target = tmp_path / "database.prismic"
     target.touch()

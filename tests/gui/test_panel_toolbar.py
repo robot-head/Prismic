@@ -14,15 +14,6 @@ from prismic.ui.main_window import MainWindow
 
 
 @pytest.fixture
-def window(qtbot: QtBot) -> MainWindow:
-    win = MainWindow()
-    qtbot.addWidget(win)
-    win.show()
-    qtbot.waitExposed(win)
-    return win
-
-
-@pytest.fixture
 def open_window(qtbot: QtBot, window: MainWindow, collection_dir: Path) -> MainWindow:
     window.open_collection(collection_dir)
     qtbot.waitUntil(lambda: window.result_model.rowCount() == 2, timeout=5000)
@@ -40,6 +31,20 @@ def _toggle_shuffle_once(
     return original_order
 
 
+def _create_tag_change(window: MainWindow):
+    session = window.session
+    assert session is not None
+    window._on_tag_create("vacation")
+    return session
+
+
+@pytest.fixture
+def shuffled_state(
+    qtbot: QtBot, open_window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> tuple[MainWindow, list[int]]:
+    return open_window, _toggle_shuffle_once(qtbot, open_window, monkeypatch)
+
+
 def _media(media_id: int, path: str) -> Media:
     return Media(
         id=media_id,
@@ -49,6 +54,16 @@ def _media(media_id: int, path: str) -> Media:
         mtime=0.0,
         state=MediaState.ACTIVE,
     )
+
+
+def _enter_fullscreen(qtbot: QtBot, window: MainWindow) -> None:
+    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
+    assert window.isFullScreen()
+
+
+def _exit_fullscreen(qtbot: QtBot, window: MainWindow) -> None:
+    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: not window.isFullScreen(), timeout=1000)
 
 
 # -- The row itself -----------------------------------------------------------
@@ -87,10 +102,7 @@ def test_toolbar_icon_colors_follow_toggle_and_enabled_state(window: MainWindow)
 def test_a_tag_change_enables_undo_and_a_click_reverts_it(
     qtbot: QtBot, open_window: MainWindow
 ) -> None:
-    session = open_window.session
-    assert session is not None
-
-    open_window._on_tag_create("vacation")
+    session = _create_tag_change(open_window)
     assert open_window.panel_toolbar.undo_button.isEnabled()
     assert not open_window.panel_toolbar.redo_button.isEnabled()
 
@@ -102,9 +114,7 @@ def test_a_tag_change_enables_undo_and_a_click_reverts_it(
 
 
 def test_a_click_on_redo_reapplies_the_undone_change(qtbot: QtBot, open_window: MainWindow) -> None:
-    session = open_window.session
-    assert session is not None
-    open_window._on_tag_create("vacation")
+    session = _create_tag_change(open_window)
     qtbot.mouseClick(open_window.panel_toolbar.undo_button, Qt.MouseButton.LeftButton)
 
     qtbot.mouseClick(open_window.panel_toolbar.redo_button, Qt.MouseButton.LeftButton)
@@ -191,9 +201,9 @@ def test_a_newly_eligible_item_is_spliced_in_at_a_random_position(
 
 
 def test_toggling_shuffle_reorders_the_result_list(
-    qtbot: QtBot, open_window: MainWindow, monkeypatch: pytest.MonkeyPatch
+    shuffled_state: tuple[MainWindow, list[int]],
 ) -> None:
-    original_order = _toggle_shuffle_once(qtbot, open_window, monkeypatch)
+    open_window, original_order = shuffled_state
 
     assert open_window._display_order == list(reversed(original_order))
     assert open_window.result_model.media_at(0).id == original_order[-1]
@@ -215,9 +225,9 @@ def test_the_shuffled_arrangement_survives_an_unrelated_refresh(
 
 
 def test_toggling_shuffle_off_restores_the_natural_order(
-    qtbot: QtBot, open_window: MainWindow, monkeypatch: pytest.MonkeyPatch
+    qtbot: QtBot, shuffled_state: tuple[MainWindow, list[int]]
 ) -> None:
-    original_order = _toggle_shuffle_once(qtbot, open_window, monkeypatch)
+    open_window, original_order = shuffled_state
 
     qtbot.mouseClick(open_window.panel_toolbar.shuffle_button, Qt.MouseButton.LeftButton)
 
@@ -262,16 +272,12 @@ def test_navigation_follows_the_shuffled_order(
 
 
 def test_toggling_fullscreen_enters_real_fullscreen(qtbot: QtBot, window: MainWindow) -> None:
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-
-    assert window.isFullScreen()
+    _enter_fullscreen(qtbot, window)
 
 
 def test_toggling_fullscreen_off_leaves_it(qtbot: QtBot, window: MainWindow) -> None:
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-
-    assert not window.isFullScreen()
+    _enter_fullscreen(qtbot, window)
+    _exit_fullscreen(qtbot, window)
 
 
 @pytest.mark.parametrize("was_maximized", [True, False], ids=["maximized", "normal"])
@@ -289,20 +295,15 @@ def test_leaving_fullscreen_restores_the_previous_window_state(
         window.setGeometry(50, 60, 700, 500)
         original_geometry = window.geometry()
 
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-    assert window.isFullScreen()
-
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-
-    assert not window.isFullScreen()
+    _enter_fullscreen(qtbot, window)
+    _exit_fullscreen(qtbot, window)
     assert window.isMaximized() is was_maximized
     if not was_maximized:
         assert window.geometry() == original_geometry
 
 
 def test_any_key_exits_fullscreen(qtbot: QtBot, window: MainWindow) -> None:
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-    assert window.isFullScreen()
+    _enter_fullscreen(qtbot, window)
 
     qtbot.keyClick(window, Qt.Key.Key_A)
 
@@ -311,8 +312,7 @@ def test_any_key_exits_fullscreen(qtbot: QtBot, window: MainWindow) -> None:
 
 
 def test_any_click_exits_fullscreen(qtbot: QtBot, window: MainWindow) -> None:
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-    assert window.isFullScreen()
+    _enter_fullscreen(qtbot, window)
 
     qtbot.mouseClick(window.item_tag_panel.header, Qt.MouseButton.LeftButton)
 

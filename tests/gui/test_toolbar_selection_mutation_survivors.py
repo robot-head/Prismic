@@ -9,7 +9,13 @@ import pytest
 from PySide6.QtCore import QRect, QRectF
 from PySide6.QtGui import QPainterPath, QPaintEvent, QPixmap
 
-from prismic.ui import panel_toolbar, selection_grid_view
+from prismic.ui import (
+    _thumbnail_badge,
+    panel_toolbar,
+    selection_grid_view,
+    thumbnail_provider,
+    thumbnail_services,
+)
 from prismic.ui.panel_toolbar import (
     FullScreenButton,
     PanelToolbar,
@@ -17,14 +23,24 @@ from prismic.ui.panel_toolbar import (
     ShuffleButton,
     UndoButton,
 )
-from prismic.ui.selection_grid_view import _MARGIN, _SPACING, SelectionGridView, _best_grid
-from prismic.ui.thumbnail_provider import ThumbnailProvider
-from prismic.ui.thumbnail_services import ThumbnailServices
+from prismic.ui.selection_grid_view import _MARGIN, _SPACING, _best_grid
 
 
-def _grid_view(provider: ThumbnailProvider | None = None) -> SelectionGridView:
-    thumbnail_provider = provider or ThumbnailProvider()
-    return SelectionGridView(ThumbnailServices(thumbnail_provider, lambda: None))
+def _grid_view(
+    provider: thumbnail_provider.ThumbnailProvider | None = None,
+) -> selection_grid_view.SelectionGridView:
+    thumbnails = provider or thumbnail_provider.ThumbnailProvider()
+    return selection_grid_view.SelectionGridView(
+        thumbnail_services.ThumbnailServices(thumbnails, lambda: None)
+    )
+
+
+def _add_grid_view(
+    qtbot, provider: thumbnail_provider.ThumbnailProvider | None = None
+) -> selection_grid_view.SelectionGridView:
+    view = _grid_view(provider)
+    qtbot.addWidget(view)
+    return view
 
 
 class _Pen:
@@ -43,6 +59,7 @@ class _Painter:
         self.fills: list[tuple[object, object]] = []
         self.clip_paths: list[QPainterPath] = []
         self.pens: list[object] = []
+        self.save_depth = 0
 
     def setRenderHint(self, _hint: object) -> None:
         pass
@@ -66,10 +83,10 @@ class _Painter:
         self.lines.append((x1, y1, x2, y2))
 
     def save(self) -> None:
-        pass
+        self.save_depth += 1
 
     def restore(self) -> None:
-        pass
+        self.save_depth -= 1
 
     def setClipPath(self, path: QPainterPath) -> None:
         self.clip_paths.append(path)
@@ -269,8 +286,7 @@ def test_grid_uses_the_candidate_with_the_largest_fitting_cell(
 
 
 def test_grid_thumbnail_events_refresh_only_a_visible_item(qtbot) -> None:
-    view = _grid_view()
-    qtbot.addWidget(view)
+    view = _add_grid_view(qtbot)
     updates: list[bool] = []
     view.update = lambda: updates.append(True)  # type: ignore[method-assign]
     view.set_items([(4, Path("a.jpg")), (9, Path("b.jpg"))])
@@ -289,8 +305,7 @@ def test_grid_thumbnail_events_refresh_only_a_visible_item(qtbot) -> None:
 def test_grid_paints_cells_in_display_order_with_row_and_column_spacing(
     qtbot, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    view = _grid_view()
-    qtbot.addWidget(view)
+    view = _add_grid_view(qtbot)
     view.resize(400, 300)
     items = [(media_id, Path(f"{media_id}.jpg")) for media_id in range(1, 6)]
     view.set_items(items)
@@ -321,8 +336,7 @@ def test_grid_paints_cells_in_display_order_with_row_and_column_spacing(
 def test_grid_thumbnail_dimension_uses_ceil_and_never_falls_below_one(
     qtbot, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    view = _grid_view()
-    qtbot.addWidget(view)
+    view = _add_grid_view(qtbot)
     monkeypatch.setattr(view, "devicePixelRatioF", lambda: 1.25)
 
     assert view._required_dimension(QRectF(0, 0, 100.1, 60.0)) == 126
@@ -339,15 +353,15 @@ def test_grid_thumbnail_dimension_uses_ceil_and_never_falls_below_one(
 def test_grid_centers_a_letterboxed_thumbnail_inside_its_cell(
     qtbot, monkeypatch, source_size, expected_point, expected_size
 ) -> None:
-    provider = ThumbnailProvider()
+    provider = thumbnail_provider.ThumbnailProvider()
     provider._cache[7] = QPixmap(*source_size)
-    view = _grid_view(provider)
-    qtbot.addWidget(view)
+    view = _add_grid_view(qtbot, provider)
     monkeypatch.setattr(view, "devicePixelRatioF", lambda: 2.0)
     painter = _Painter()
 
     view._paint_cell(painter, QRectF(10, 20, 100, 60), 7, Path("photo.jpg"))  # type: ignore[arg-type]
 
+    assert painter.save_depth == 0
     expected_clip = QPainterPath()
     expected_clip.addRoundedRect(QRectF(10, 20, 100, 60), 6, 6)
     assert painter.clip_paths == [expected_clip]
@@ -358,11 +372,10 @@ def test_grid_centers_a_letterboxed_thumbnail_inside_its_cell(
 
 
 def test_grid_video_badge_uses_the_compact_grid_scale(qtbot, monkeypatch) -> None:
-    view = _grid_view()
-    qtbot.addWidget(view)
+    view = _add_grid_view(qtbot)
     badge_calls: list[tuple[QRectF, float]] = []
     monkeypatch.setattr(
-        selection_grid_view,
+        _thumbnail_badge,
         "paint_play_badge",
         lambda _painter, rect, *, size_fraction: badge_calls.append((rect, size_fraction)),
     )

@@ -1,8 +1,14 @@
+import pytest
+
 from prismic.application.input.chord import ChordState
 
 
-def test_starts_with_nothing_pending() -> None:
+@pytest.mark.parametrize("cancel_after_press", [False, True], ids=["new", "cancelled"])
+def test_empty_or_cancelled_chord_has_no_pending_state(cancel_after_press: bool) -> None:
     chord = ChordState()
+    if cancel_after_press:
+        chord.press("g")
+        chord.cancel()
 
     assert chord.is_pending is False
     assert chord.pending_keys == ()
@@ -30,26 +36,23 @@ def test_match_on_an_exact_chord_returns_the_command_and_clears() -> None:
     assert chord.is_pending is False
 
 
-def test_match_on_a_valid_prefix_returns_none_and_stays_pending() -> None:
+@pytest.mark.parametrize(
+    ("pressed_keys", "expected_pending"),
+    [("g", True), ("x", False)],
+    ids=["valid-prefix", "dead-end"],
+)
+def test_match_without_a_complete_chord_returns_none(
+    pressed_keys: str, expected_pending: bool
+) -> None:
     chord = ChordState()
     chords: dict[tuple[str, ...], str] = {("g", "g"): "go_to_start"}
-    chord.press("g")
+    for key in pressed_keys:
+        chord.press(key)
 
     result = chord.match(chords)
 
     assert result is None
-    assert chord.is_pending is True
-
-
-def test_match_on_a_dead_end_cancels() -> None:
-    chord = ChordState()
-    chords: dict[tuple[str, ...], str] = {("g", "g"): "go_to_start"}
-    chord.press("x")
-
-    result = chord.match(chords)
-
-    assert result is None
-    assert chord.is_pending is False
+    assert chord.is_pending is expected_pending
 
 
 def test_advance_time_within_timeout_does_not_cancel() -> None:
@@ -88,13 +91,3 @@ def test_a_new_key_press_resets_the_timeout_clock() -> None:
 
     assert timed_out is False
     assert chord.pending_keys == ("g", "g")
-
-
-def test_cancel_clears_pending_state() -> None:
-    chord = ChordState()
-    chord.press("g")
-
-    chord.cancel()
-
-    assert chord.is_pending is False
-    assert chord.pending_keys == ()

@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
 )
 
 from prismic.ui import theme
+from prismic.ui._delegate_painting import draw_elided_item_text, paint_selection_wash
 from prismic.ui.tag_model import CheckedRole, CheckedSlotRole, TagIdRole, UncheckedSlotRole
 
 _Index = QModelIndex | QPersistentModelIndex
@@ -150,10 +151,7 @@ class TagRowDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         rect = option.rect
-        if checked:
-            painter.fillRect(rect, QColor(theme.SELECTED_WASH))
-        elif hovered:
-            painter.fillRect(rect, QColor(theme.HOVER_WASH))
+        paint_selection_wash(painter, rect, selected=checked, hovered=hovered)
 
         checkbox_rect, rename_rect, delete_rect = self._rects(rect)
         checkbox_path = QPainterPath()
@@ -186,11 +184,7 @@ class TagRowDelegate(QStyledItemDelegate):
             rect.height(),
         )
         painter.setPen(QPen(QColor(theme.TEXT_PRIMARY)))
-        metrics = painter.fontMetrics()
-        elided = metrics.elidedText(name, Qt.TextElideMode.ElideMiddle, max(0, text_rect.width()))
-        painter.drawText(
-            text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided
-        )
+        draw_elided_item_text(painter, name, text_rect, max(0, text_rect.width()))
 
         if hovered:
             self._paint_icon(painter, rename_rect, "rename")

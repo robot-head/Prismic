@@ -8,6 +8,8 @@ import pytest
 
 from prismic.persistence import database, migrations
 
+pytest_plugins = ("tests._reconciliation_test_context",)
+
 _SLOW_STATE_PATH = Path(__file__).parent.parent / ".slow_test_state.json"
 _SLOW_STATE_HISTORY_LENGTH = 3
 

@@ -1,7 +1,7 @@
 import pytest
 from PySide6.QtGui import QImage
 
-from prismic.application.commands.tag_commands import (
+from prismic.application.commands import (
     TagCreateCommand,
     TagDeleteCommand,
     TagRenameCommand,

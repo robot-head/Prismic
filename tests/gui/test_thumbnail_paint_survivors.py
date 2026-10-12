@@ -3,16 +3,16 @@
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QModelIndex, QRect, QRectF, QSize
+from PySide6.QtCore import QModelIndex, QRect, QSize
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
 from pytestqt.qtbot import QtBot
 
 from prismic.ui import theme
-from prismic.ui._thumbnail_badge import paint_play_badge
 from prismic.ui.result_model import MediaIdRole
 from prismic.ui.thumbnail_delegate import ThumbnailDelegate
 from prismic.ui.thumbnail_services import ThumbnailServices
+from tests.gui._thumbnail_helpers import render_play_badge
 
 
 class _Provider:
@@ -27,7 +27,9 @@ class _Provider:
     def has_failed(self, media_id: int) -> bool:
         return media_id in self.failed
 
-    def request(self, media_id: int, path: Path, pool: object) -> None:
+    def request(
+        self, media_id: int, path: Path, pool: object, dimension: int | None = None
+    ) -> None:
         self.requests.append((media_id, path, pool))
 
 
@@ -91,13 +93,15 @@ def _striped_pixmap(*, horizontal: bool) -> QPixmap:
     return pixmap
 
 
+def _render_cached_striped_thumbnail(*, horizontal: bool) -> QImage:
+    provider = _Provider({17: _striped_pixmap(horizontal=horizontal)})
+    delegate = _delegate(provider)
+    delegate.show_thumbnails = True
+    return _render(delegate)
+
+
 def test_play_badge_draws_a_centered_circle_and_right_facing_triangle(qtbot: QtBot) -> None:
-    image = QImage(100, 100, QImage.Format.Format_ARGB32_Premultiplied)
-    background = QColor("#ff00ff")
-    image.fill(background)
-    painter = QPainter(image)
-    paint_play_badge(painter, QRectF(10, 20, 80, 60), size_fraction=0.25)
-    painter.end()
+    image, background = render_play_badge()
 
     # The circle radius is 15 (one quarter of the 60px short side), centered
     # at (50, 50); the play glyph is white and points to the right.
@@ -173,22 +177,14 @@ def test_video_thumbnail_gets_a_badge_without_an_extra_request(qtbot: QtBot, cac
 
 
 def test_cached_wide_thumbnail_is_cropped_equally_from_both_sides(qtbot: QtBot) -> None:
-    provider = _Provider({17: _striped_pixmap(horizontal=False)})
-    delegate = _delegate(provider)
-    delegate.show_thumbnails = True
-
-    image = _render(delegate)
+    image = _render_cached_striped_thumbnail(horizontal=False)
 
     assert image.pixelColor(30, 52) == QColor("#e02020")
     assert image.pixelColor(54, 52) == QColor("#2040e0")
 
 
 def test_cached_tall_thumbnail_is_cropped_equally_from_top_and_bottom(qtbot: QtBot) -> None:
-    provider = _Provider({17: _striped_pixmap(horizontal=True)})
-    delegate = _delegate(provider)
-    delegate.show_thumbnails = True
-
-    image = _render(delegate)
+    image = _render_cached_striped_thumbnail(horizontal=True)
 
     assert image.pixelColor(42, 40) == QColor("#e02020")
     assert image.pixelColor(42, 64) == QColor("#2040e0")

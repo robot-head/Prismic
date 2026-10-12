@@ -6,8 +6,7 @@ from PySide6.QtCore import QSize
 from PySide6.QtGui import QImage
 from pytestqt.qtbot import QtBot
 
-from prismic.application.worker_pool import WorkerPool
-from prismic.ui.thumbnail_provider import ThumbnailProvider
+from tests.gui.test_thumbnail_provider import make_provider_and_pool
 
 
 def test_request_without_a_dimension_caps_the_decode_at_160_pixels(
@@ -18,8 +17,7 @@ def test_request_without_a_dimension_caps_the_decode_at_160_pixels(
     image_path = tmp_path / "large.png"
     assert source.save(str(image_path))
 
-    provider = ThumbnailProvider()
-    pool = WorkerPool()
+    provider, pool = make_provider_and_pool()
     try:
         provider.request(1, image_path, pool)
         qtbot.waitUntil(lambda: provider.get(1) is not None, timeout=5000)

@@ -6,7 +6,8 @@ selected.
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+import pytest
+from PySide6 import QtCore
 from pytestqt.qtbot import QtBot
 
 from prismic.domain.tag import Tag
@@ -34,7 +35,9 @@ def _create_common_tag(window: MainWindow, name: str) -> tuple[int, int, Tag]:
     return a_id, b_id, tag
 
 
-def _click(qtbot: QtBot, window: MainWindow, row: int, modifier: Qt.KeyboardModifier) -> None:
+def _click(
+    qtbot: QtBot, window: MainWindow, row: int, modifier: QtCore.Qt.KeyboardModifier
+) -> None:
     index = window.result_model.index(row, 0)
     window.result_list.scrollTo(index)
     qtbot.waitUntil(
@@ -46,13 +49,31 @@ def _click(qtbot: QtBot, window: MainWindow, row: int, modifier: Qt.KeyboardModi
     )
     rect = window.result_list.visualRect(index)
     qtbot.mouseClick(
-        window.result_list.viewport(), Qt.MouseButton.LeftButton, modifier, pos=rect.center()
+        window.result_list.viewport(),
+        QtCore.Qt.MouseButton.LeftButton,
+        modifier,
+        pos=rect.center(),
     )
 
 
 def _select_two_through_list(qtbot: QtBot, window: MainWindow) -> None:
-    _click(qtbot, window, 0, Qt.KeyboardModifier.NoModifier)
-    _click(qtbot, window, 1, Qt.KeyboardModifier.ControlModifier)
+    _click(qtbot, window, 0, QtCore.Qt.KeyboardModifier.NoModifier)
+    _click(qtbot, window, 1, QtCore.Qt.KeyboardModifier.ControlModifier)
+
+
+def _open_and_select_two_through_list(
+    qtbot: QtBot, window: MainWindow, collection_dir: Path
+) -> None:
+    open_and_wait(qtbot, window, collection_dir)
+    _select_two_through_list(qtbot, window)
+
+
+@pytest.fixture
+def two_selected_window(
+    qtbot: QtBot, window: MainWindow, collection_dir: Path
+) -> MainWindow:
+    _open_and_select_two_through_list(qtbot, window, collection_dir)
+    return window
 
 
 # -- The grid replaces the viewer for a multi-selection -----------------------
@@ -85,14 +106,12 @@ def test_a_single_selection_shows_the_ordinary_viewer(
 
 
 def test_ctrl_click_through_the_real_list_selects_both_and_shows_the_grid(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
+    two_selected_window: MainWindow,
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-
-    _select_two_through_list(qtbot, window)
-
-    assert window.session.state.selected_items == frozenset(window.session.state.result_set)  # type: ignore[union-attr]
-    assert window._media_stack.currentWidget() is window.selection_grid
+    session = two_selected_window.session
+    assert session is not None
+    assert session.state.selected_items == frozenset(session.state.result_set)
+    assert two_selected_window._media_stack.currentWidget() is two_selected_window.selection_grid
 
 
 def test_ctrl_click_on_a_selected_row_deselects_it_and_falls_back_to_the_viewer(
@@ -105,9 +124,11 @@ def test_ctrl_click_on_a_selected_row_deselects_it_and_falls_back_to_the_viewer(
     open_and_wait(qtbot, window, collection_dir)
     first_id, _second_id = window.session.state.result_set  # type: ignore[union-attr]
 
-    _click(qtbot, window, 0, Qt.KeyboardModifier.NoModifier)
-    _click(qtbot, window, 1, Qt.KeyboardModifier.ControlModifier)  # both selected, row 1 current
-    _click(qtbot, window, 1, Qt.KeyboardModifier.ControlModifier)  # deselect row 1
+    _click(qtbot, window, 0, QtCore.Qt.KeyboardModifier.NoModifier)
+    _click(
+        qtbot, window, 1, QtCore.Qt.KeyboardModifier.ControlModifier
+    )  # both selected, row 1 current
+    _click(qtbot, window, 1, QtCore.Qt.KeyboardModifier.ControlModifier)  # deselect row 1
 
     assert window.session.state.selected_items == frozenset({first_id})  # type: ignore[union-attr]
     assert window.session.state.current_item == first_id  # type: ignore[union-attr]
@@ -115,15 +136,14 @@ def test_ctrl_click_on_a_selected_row_deselects_it_and_falls_back_to_the_viewer(
 
 
 def test_a_later_plain_click_collapses_back_to_a_single_item(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
+    qtbot: QtBot, two_selected_window: MainWindow
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    _select_two_through_list(qtbot, window)
+    _click(qtbot, two_selected_window, 0, QtCore.Qt.KeyboardModifier.NoModifier)
 
-    _click(qtbot, window, 0, Qt.KeyboardModifier.NoModifier)
-
-    assert window.session.state.selected_items == {window.session.state.result_set[0]}  # type: ignore[union-attr]
-    assert window._media_stack.currentWidget() is window.viewer
+    session = two_selected_window.session
+    assert session is not None
+    assert session.state.selected_items == {session.state.result_set[0]}
+    assert two_selected_window._media_stack.currentWidget() is two_selected_window.viewer
 
 
 # -- Multi-select tag editing shows/writes the intersection -------------------

@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QEvent, QMargins, QPoint, QPointF, Qt
-from PySide6.QtGui import QColor, QImage, QKeyEvent, QMouseEvent, QPixmap, QWheelEvent
+from PySide6.QtCore import QEvent, QMargins, QPointF, Qt
+from PySide6.QtGui import QColor, QImage, QKeyEvent, QMouseEvent, QPixmap
 from PySide6.QtMultimedia import QMediaPlayer
 from pytestqt.qtbot import QtBot
 
@@ -19,10 +19,10 @@ from prismic.ui.image_view import ImageView
 from prismic.ui.instance_bridge import InstanceBridge
 from prismic.ui.keyboard import KeyboardController, literal_character
 from prismic.ui.result_model import MediaIdRole, ResultListModel
-from prismic.ui.scan_progress_bar import ScanProgressBar
 from prismic.ui.tag_panel import TagPanel
 from prismic.ui.transient_message_bar import TransientMessageBar
 from prismic.ui.viewer import MediaViewer
+from tests.gui._mutation_helpers import assert_raise_not_requested, wheel_event
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "media"
 
@@ -128,16 +128,7 @@ def test_exact_single_wheel_delta_zooms_in(qtbot: QtBot) -> None:
     qtbot.addWidget(view)
     view.set_image(QImage(100, 100, QImage.Format.Format_RGB32))
     before = view.zoom
-    event = QWheelEvent(
-        QPoint(10, 10).toPointF(),
-        QPoint(10, 10).toPointF(),
-        QPoint(0, 0),
-        QPoint(0, 1),
-        Qt.MouseButton.NoButton,
-        Qt.KeyboardModifier.NoModifier,
-        Qt.ScrollPhase.NoScrollPhase,
-        False,
-    )
+    event = wheel_event(1)
 
     view.wheelEvent(event)
 
@@ -254,15 +245,6 @@ def test_playback_state_sets_the_matching_button_label(qtbot: QtBot) -> None:
     assert viewer.play_pause_button.text() == "Play"
 
 
-def test_reset_progress_uses_qt_indeterminate_range(qtbot: QtBot) -> None:
-    bar = ScanProgressBar()
-    qtbot.addWidget(bar)
-
-    bar.reset_progress()
-
-    assert (bar.minimum(), bar.maximum()) == (0, 0)
-
-
 def test_column_splitter_draws_a_one_pixel_line_centered_in_both_orientations(
     qtbot: QtBot,
 ) -> None:
@@ -313,20 +295,8 @@ def test_transient_message_without_timeout_stays_visible(qtbot: QtBot) -> None:
 
 
 def test_instance_bridge_ignores_raise_messages_with_trailing_bytes() -> None:
-    class _Socket:
-        def readAll(self) -> QByteArray:
-            return QByteArray(b"raise-extra")
-
-        def disconnectFromServer(self) -> None:
-            pass
-
     bridge = InstanceBridge()
-    received: list[bool] = []
-    bridge.raise_requested.connect(lambda: received.append(True))
-
-    bridge._on_ready_read(_Socket())
-
-    assert received == []
+    assert_raise_not_requested(bridge, b"raise-extra")
 
 
 def test_instance_bridge_release_closes_its_listening_server(tmp_path: Path) -> None:

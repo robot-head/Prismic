@@ -7,9 +7,10 @@ from typing import TypedDict, Unpack
 
 from prismic.domain.media import Media, MediaState
 from prismic.persistence.errors import UnknownMediaError
+from prismic.persistence.repositories._base import SQLiteRepository
 
 
-class _MediaFields(TypedDict):
+class MediaFields(TypedDict):
     relative_path: str
     content_hash: str
     size: int
@@ -30,26 +31,12 @@ def _row_to_media(row: sqlite3.Row) -> Media:
 
 def _make_media(
     media_id: int,
-    relative_path: str,
-    content_hash: str,
-    size: int,
-    mtime: float,
-    state: MediaState,
+    **fields: Unpack[MediaFields],
 ) -> Media:
-    return Media(
-        id=media_id,
-        relative_path=relative_path,
-        content_hash=content_hash,
-        size=size,
-        mtime=mtime,
-        state=state,
-    )
+    return Media(id=media_id, **fields)
 
 
-class MediaRepository:
-    def __init__(self, connection: sqlite3.Connection) -> None:
-        self._connection = connection
-
+class MediaRepository(SQLiteRepository):
     def create(
         self,
         relative_path: str,
@@ -67,7 +54,14 @@ class MediaRepository:
         )
         media_id = cursor.lastrowid
         assert media_id is not None
-        return _make_media(media_id, relative_path, content_hash, size, mtime, state)
+        return _make_media(
+            media_id,
+            relative_path=relative_path,
+            content_hash=content_hash,
+            size=size,
+            mtime=mtime,
+            state=state,
+        )
 
     def get(self, media_id: int) -> Media | None:
         row = self._connection.execute("SELECT * FROM media WHERE id = ?", (media_id,)).fetchone()
@@ -88,7 +82,7 @@ class MediaRepository:
     def update(
         self,
         media_id: int,
-        **fields: Unpack[_MediaFields],
+        **fields: Unpack[MediaFields],
     ) -> Media:
         cursor = self._connection.execute(
             """
@@ -109,11 +103,11 @@ class MediaRepository:
             raise UnknownMediaError(media_id)
         return _make_media(
             media_id,
-            fields["relative_path"],
-            fields["content_hash"],
-            fields["size"],
-            fields["mtime"],
-            fields["state"],
+            relative_path=fields["relative_path"],
+            content_hash=fields["content_hash"],
+            size=fields["size"],
+            mtime=fields["mtime"],
+            state=fields["state"],
         )
 
     def list_all(self) -> list[Media]:

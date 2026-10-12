@@ -32,7 +32,8 @@ from prismic.domain.collection import Collection
 from prismic.domain.media import Media, MediaState
 from prismic.indexing.hashing import hash_file
 from prismic.indexing.scanner import ScannedFile, scan
-from prismic.persistence.repositories.media_repository import MediaRepository
+from prismic.persistence import database
+from prismic.persistence.repositories.media_repository import MediaFields, MediaRepository
 from prismic.persistence.repositories.scan_stats_repository import ScanStatsRepository
 
 # Called as (files_processed_so_far, expected_total) while a scan is under
@@ -112,14 +113,18 @@ class ReconciliationResult:
     missing_count: int = 0
 
 
+def _active_media_fields(file: HashedFile) -> MediaFields:
+    return {
+        "relative_path": file.relative_path,
+        "content_hash": file.content_hash,
+        "size": file.size,
+        "mtime": file.mtime,
+        "state": MediaState.ACTIVE,
+    }
+
+
 def _create_active_media(repository: MediaRepository, file: HashedFile) -> None:
-    repository.create(
-        relative_path=file.relative_path,
-        content_hash=file.content_hash,
-        size=file.size,
-        mtime=file.mtime,
-        state=MediaState.ACTIVE,
-    )
+    repository.create(**_active_media_fields(file))
 
 
 class Reconciler:
@@ -183,8 +188,7 @@ class Reconciler:
         existing = media_repository.list_all()
         existing_by_path = {m.relative_path: m for m in existing if m.state == MediaState.ACTIVE}
 
-        connection.execute("BEGIN")
-        try:
+        with database.transaction(connection):
             new_count = 0
             unchanged_count = 0
             changed_count = 0
@@ -226,14 +230,7 @@ class Reconciler:
                 if len(candidates) == 1 and len(files) == 1:
                     media = candidates[0]
                     file = files[0]
-                    media_repository.update(
-                        media.id,
-                        relative_path=file.relative_path,
-                        content_hash=file.content_hash,
-                        size=file.size,
-                        mtime=file.mtime,
-                        state=MediaState.ACTIVE,
-                    )
+                    media_repository.update(media.id, **_active_media_fields(file))
                     relinked_media_ids.add(media.id)
                     moved_count += 1
                 else:
@@ -249,12 +246,6 @@ class Reconciler:
                     continue
                 self._mark_missing(media_repository, media)
                 missing_count += 1
-        except Exception:
-            connection.execute("ROLLBACK")
-            raise
-        else:
-            connection.execute("COMMIT")
-
         return ReconciliationResult(
             applied=True,
             new_count=new_count,

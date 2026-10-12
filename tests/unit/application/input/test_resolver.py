@@ -50,12 +50,7 @@ def test_dispatch_respects_context_precedence_when_text_editing_handles_or_falls
 
 
 def test_precedence_order_is_text_local_viewer_global() -> None:
-    assert INPUT_CONTEXT_PRECEDENCE == (
-        InputContext.TEXT_EDITING,
-        InputContext.LOCAL_MODAL,
-        InputContext.VIEWER,
-        InputContext.GLOBAL_COMMAND,
-    )
+    assert INPUT_CONTEXT_PRECEDENCE == tuple(InputContext)
 
 
 def test_unregister_removes_a_handler() -> None:

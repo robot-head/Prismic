@@ -14,13 +14,16 @@ reports.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton, QWidget
+from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton
 from pytestqt.qtbot import QtBot
 
 from prismic.ui.frameless_dialog import MessageDialog, SizeGrip
+from tests.gui._dialog_helpers import message_dialog
+from tests.gui.helpers import shown_parent
 
 
 def buttons_of(dialog: MessageDialog) -> list[QPushButton]:
@@ -46,11 +49,11 @@ def _dialog(
     default: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok,
 ) -> MessageDialog:
     dialog = MessageDialog(
-        None,
-        title,
-        text,
-        buttons,
-        default,
+        parent=None,
+        title=title,
+        text=text,
+        buttons=buttons,
+        default=default,
     )
     qtbot.addWidget(dialog)
     return dialog
@@ -160,13 +163,10 @@ def intercept(
 
     def capture_init(
         self: MessageDialog,
-        parent: QWidget | None,
-        title: str,
-        text: str,
-        buttons: QMessageBox.StandardButton,
-        default: QMessageBox.StandardButton,
+        *args: Any,
+        **kwargs: Any,
     ) -> None:
-        original_init(self, parent, title, text, buttons, default)
+        original_init(self, *args, **kwargs)
         seen.append(self)
         qtbot.addWidget(self)
         QTimer.singleShot(0, lambda: on_shown(self))
@@ -212,15 +212,9 @@ def test_critical_shows_only_an_ok_button(qtbot: QtBot, monkeypatch: pytest.Monk
 
 
 def test_a_parented_message_dialog_positions_itself_before_it_is_shown(qtbot: QtBot) -> None:
-    parent = QWidget()
-    qtbot.addWidget(parent)
-    parent.resize(1200, 800)
-    parent.show()
-    qtbot.waitExposed(parent)
+    parent = shown_parent(qtbot, 1200, 800)
 
-    dialog = MessageDialog(
-        parent, "Title", "Text", QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.Ok
-    )
+    dialog = message_dialog(parent)
     qtbot.addWidget(dialog)
 
     assert dialog.testAttribute(Qt.WidgetAttribute.WA_Moved)
@@ -229,9 +223,7 @@ def test_a_parented_message_dialog_positions_itself_before_it_is_shown(qtbot: Qt
 def test_a_message_dialog_has_no_resize_grip(qtbot: QtBot) -> None:
     """Unlike Settings, a message box's size follows its text -- there's
     nothing for a resize handle to usefully do here."""
-    dialog = MessageDialog(
-        None, "Title", "Text", QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.Ok
-    )
+    dialog = message_dialog()
     qtbot.addWidget(dialog)
 
     assert dialog.findChild(SizeGrip) is None

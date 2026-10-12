@@ -8,21 +8,27 @@ from prismic.ui.viewer import MediaViewer
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "media"
 
 
-def test_shows_image_for_a_supported_image_path(qtbot: QtBot) -> None:
+def _show_media(qtbot: QtBot, path: Path) -> MediaViewer:
     viewer = MediaViewer()
     qtbot.addWidget(viewer)
+    viewer.show_media(path)
+    return viewer
 
-    viewer.show_media(FIXTURES_DIR / "supported_image.png")
+
+def _show_gif(qtbot: QtBot, path: Path, frame_count: int) -> MediaViewer:
+    _gif(path, frame_count)
+    return _show_media(qtbot, path)
+
+
+def test_shows_image_for_a_supported_image_path(qtbot: QtBot) -> None:
+    viewer = _show_media(qtbot, FIXTURES_DIR / "supported_image.png")
 
     assert viewer.is_showing_image is True
     assert viewer.is_showing_video is False
 
 
 def test_shows_video_for_a_webm_path(qtbot: QtBot) -> None:
-    viewer = MediaViewer()
-    qtbot.addWidget(viewer)
-
-    viewer.show_media(FIXTURES_DIR / "supported_video.webm")
+    viewer = _show_media(qtbot, FIXTURES_DIR / "supported_video.webm")
 
     assert viewer.is_showing_video is True
     assert viewer.is_showing_image is False
@@ -40,9 +46,7 @@ def test_corrupt_image_emits_load_error_and_shows_nothing(qtbot: QtBot) -> None:
 
 
 def test_toggle_playback_starts_and_pauses_video(qtbot: QtBot) -> None:
-    viewer = MediaViewer()
-    qtbot.addWidget(viewer)
-    viewer.show_media(FIXTURES_DIR / "supported_video.webm")
+    viewer = _show_media(qtbot, FIXTURES_DIR / "supported_video.webm")
     qtbot.waitUntil(lambda: viewer.video_player.duration_ms > 0, timeout=5000)
 
     viewer.toggle_playback()
@@ -59,9 +63,7 @@ def test_toggle_playback_starts_and_pauses_video(qtbot: QtBot) -> None:
 
 
 def test_clear_resets_to_the_empty_state(qtbot: QtBot) -> None:
-    viewer = MediaViewer()
-    qtbot.addWidget(viewer)
-    viewer.show_media(FIXTURES_DIR / "supported_image.png")
+    viewer = _show_media(qtbot, FIXTURES_DIR / "supported_image.png")
 
     viewer.clear()
 
@@ -98,11 +100,7 @@ def _gif(path: Path, frame_count: int) -> None:
 
 def test_animated_gif_plays_in_the_image_view(qtbot: QtBot, tmp_path: Path) -> None:
     gif = tmp_path / "anim.gif"
-    _gif(gif, 3)
-    viewer = MediaViewer()
-    qtbot.addWidget(viewer)
-
-    viewer.show_media(gif)
+    viewer = _show_gif(qtbot, gif, 3)
 
     assert viewer.is_showing_image is True
     assert viewer.image_view.is_animating is True
@@ -112,11 +110,7 @@ def test_animated_gif_plays_in_the_image_view(qtbot: QtBot, tmp_path: Path) -> N
 
 def test_single_frame_gif_is_not_treated_as_an_animation(qtbot: QtBot, tmp_path: Path) -> None:
     gif = tmp_path / "still.gif"
-    _gif(gif, 1)
-    viewer = MediaViewer()
-    qtbot.addWidget(viewer)
-
-    viewer.show_media(gif)
+    viewer = _show_gif(qtbot, gif, 1)
 
     assert viewer.image_view.is_animating is False
 

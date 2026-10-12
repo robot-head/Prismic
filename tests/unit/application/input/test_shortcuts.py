@@ -18,6 +18,15 @@ def bindings(tmp_path: Path) -> ShortcutBindings:
     return ShortcutBindings(PreferencesStore(tmp_path / "preferences.json"))
 
 
+def _custom_open_collection_binding(
+    tmp_path: Path,
+) -> tuple[PreferencesStore, ShortcutBindings]:
+    store = PreferencesStore(tmp_path / "preferences.json")
+    bindings = ShortcutBindings(store)
+    bindings.set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "F5")
+    return store, bindings
+
+
 # -- The registry itself ----------------------------------------------------
 
 
@@ -281,8 +290,7 @@ def test_a_modifier_binding_collides_with_another_like_any_other_key(
 
 
 def test_overrides_survive_a_reload(tmp_path: Path) -> None:
-    store = PreferencesStore(tmp_path / "preferences.json")
-    ShortcutBindings(store).set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "F5")
+    store, _bindings = _custom_open_collection_binding(tmp_path)
 
     assert ShortcutBindings(store).binding(shortcuts.OPEN_COLLECTION_FOLDER) == "F5"
 
@@ -291,18 +299,13 @@ def test_only_overrides_are_written_not_the_whole_table(tmp_path: Path) -> None:
     """So a changed default reaches everyone who hadn't customized that
     particular shortcut, instead of being frozen at whatever the table
     said the first time the app ran."""
-    store = PreferencesStore(tmp_path / "preferences.json")
-    bindings = ShortcutBindings(store)
-
-    bindings.set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "F5")
+    store, _bindings = _custom_open_collection_binding(tmp_path)
 
     assert store.load()["shortcuts"] == {shortcuts.OPEN_COLLECTION_FOLDER: "F5"}
 
 
 def test_resetting_the_last_override_removes_the_section_entirely(tmp_path: Path) -> None:
-    store = PreferencesStore(tmp_path / "preferences.json")
-    bindings = ShortcutBindings(store)
-    bindings.set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "F5")
+    store, bindings = _custom_open_collection_binding(tmp_path)
 
     bindings.reset(shortcuts.OPEN_COLLECTION_FOLDER)
 

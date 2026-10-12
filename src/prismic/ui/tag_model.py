@@ -30,11 +30,11 @@ never touches this file.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QPersistentModelIndex, Qt
+from PySide6.QtCore import QModelIndex, QObject, QPersistentModelIndex, Qt
 
 from prismic.application.input.shortcuts import QUICK_SELECT_SLOT_COUNT
 from prismic.domain.tag import Tag
-from prismic.ui._model_utils import find_row_by_id, top_level_row_count
+from prismic.ui._identified_list_model import _IdentifiedListModel
 
 _Index = QModelIndex | QPersistentModelIndex
 
@@ -52,34 +52,32 @@ def _slot_for_position(position: int) -> int | None:
     return position if position < QUICK_SELECT_SLOT_COUNT else None
 
 
-class TagListModel(QAbstractListModel):
+class TagListModel(_IdentifiedListModel[Tag]):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._tags: list[Tag] = []
         self._selected_tag_ids: frozenset[int] = frozenset()
         self._unchecked_slots: dict[int, int] = {}
         self._checked_slots: dict[int, int] = {}
 
     def set_tags(self, tags: list[Tag], selected_tag_ids: frozenset[int]) -> None:
-        self.beginResetModel()
-        self._tags = tags
-        self._selected_tag_ids = selected_tag_ids
-        self._unchecked_slots = {}
-        self._checked_slots = {}
-        unchecked_count = 0
-        checked_count = 0
-        for tag in tags:
-            if tag.id in selected_tag_ids:
-                slot = _slot_for_position(checked_count)
-                if slot is not None:
-                    self._checked_slots[tag.id] = slot
-                checked_count += 1
-            else:
-                slot = _slot_for_position(unchecked_count)
-                if slot is not None:
-                    self._unchecked_slots[tag.id] = slot
-                unchecked_count += 1
-        self.endResetModel()
+        with self._model_reset():
+            self._items = tags
+            self._selected_tag_ids = selected_tag_ids
+            self._unchecked_slots = {}
+            self._checked_slots = {}
+            unchecked_count = 0
+            checked_count = 0
+            for tag in tags:
+                if tag.id in selected_tag_ids:
+                    slot = _slot_for_position(checked_count)
+                    if slot is not None:
+                        self._checked_slots[tag.id] = slot
+                    checked_count += 1
+                else:
+                    slot = _slot_for_position(unchecked_count)
+                    if slot is not None:
+                        self._unchecked_slots[tag.id] = slot
+                    unchecked_count += 1
 
     def tag_id_for_slot(self, slot: int, *, selected: bool) -> int | None:
         """The tag currently occupying quick-select `slot` in the unchecked
@@ -93,18 +91,15 @@ class TagListModel(QAbstractListModel):
         return None
 
     def tag_at(self, row: int) -> Tag:
-        return self._tags[row]
+        return self._item_at(row)
 
     def row_for_tag_id(self, tag_id: int) -> int | None:
-        return find_row_by_id(self._tags, tag_id)
-
-    def rowCount(self, parent: _Index | None = None) -> int:
-        return top_level_row_count(parent, len(self._tags))
+        return self._row_for_id(tag_id)
 
     def data(self, index: _Index, role: int = Qt.ItemDataRole.DisplayRole) -> object:
-        if not index.isValid() or not (0 <= index.row() < len(self._tags)):
+        tag = self._item_for_index(index)
+        if tag is None:
             return None
-        tag = self._tags[index.row()]
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             return tag.name
         if role == TagIdRole:

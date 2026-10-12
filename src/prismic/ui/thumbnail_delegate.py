@@ -19,12 +19,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRectF, QSize, Qt
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
 from prismic.ui import theme
-from prismic.ui._thumbnail_badge import paint_play_badge
+from prismic.ui._delegate_painting import draw_elided_item_text, paint_selection_wash
+from prismic.ui._thumbnail_badge import paint_thumbnail
 from prismic.ui.result_model import MediaIdRole
 from prismic.ui.thumbnail_services import ThumbnailServices
 
@@ -70,10 +71,7 @@ class ThumbnailDelegate(QStyledItemDelegate):
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
 
-        if selected:
-            painter.fillRect(rect, QColor(theme.SELECTED_WASH))
-        elif hovered:
-            painter.fillRect(rect, QColor(theme.HOVER_WASH))
+        paint_selection_wash(painter, rect, selected=selected, hovered=hovered)
 
         if self.show_thumbnails:
             thumb_rect = QRectF(
@@ -89,11 +87,7 @@ class ThumbnailDelegate(QStyledItemDelegate):
 
         text_rect = QRectF(text_x, rect.y(), rect.right() - text_x - _MARGIN, rect.height())
         painter.setPen(QPen(QColor(theme.TEXT_PRIMARY)))
-        metrics = painter.fontMetrics()
-        elided = metrics.elidedText(name, Qt.TextElideMode.ElideMiddle, int(text_rect.width()))
-        painter.drawText(
-            text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided
-        )
+        draw_elided_item_text(painter, name, text_rect, int(text_rect.width()))
 
         painter.restore()
 
@@ -106,6 +100,8 @@ class ThumbnailDelegate(QStyledItemDelegate):
         pixmap = self._thumbnails.provider.get(media_id)
         is_video = self._thumbnails.is_video(name)
 
+        scaled = None
+        position = None
         if pixmap is not None:
             scaled = pixmap.scaled(
                 rect.size().toSize(),
@@ -114,15 +110,18 @@ class ThumbnailDelegate(QStyledItemDelegate):
             )
             x_off = rect.x() - (scaled.width() - rect.width()) / 2
             y_off = rect.y() - (scaled.height() - rect.height()) / 2
-            painter.drawPixmap(int(x_off), int(y_off), scaled)
-            if is_video:
-                paint_play_badge(painter, rect, size_fraction=0.26)
-        else:
-            painter.fillRect(rect, QColor(theme.THUMB_PLACEHOLDER))
-            if is_video:
-                paint_play_badge(painter, rect, size_fraction=0.26)
-            elif not self._thumbnails.provider.has_failed(media_id):
-                self._request_thumbnail(media_id, name)
+            position = QPoint(int(x_off), int(y_off))
+
+        paint_thumbnail(
+            painter,
+            rect,
+            scaled,
+            position,
+            is_video=is_video,
+            size_fraction=0.26,
+        )
+        if pixmap is None and not is_video and not self._thumbnails.provider.has_failed(media_id):
+            self._request_thumbnail(media_id, name)
 
         painter.restore()
 

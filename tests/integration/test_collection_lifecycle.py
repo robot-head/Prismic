@@ -16,6 +16,13 @@ from prismic.persistence.errors import (
 )
 
 
+@pytest.fixture
+def empty_collection_root(tmp_path: Path) -> Path:
+    root = tmp_path / "vacation"
+    root.mkdir()
+    return root
+
+
 def test_opening_accepts_a_plain_string_path_not_just_a_path_object(tmp_path: Path) -> None:
     collection_root = tmp_path / "vacation"
     collection_root.mkdir()
@@ -72,10 +79,10 @@ def test_more_than_one_prismic_file_in_a_directory_is_an_error(tmp_path: Path) -
         open_collection(collection_root)
 
 
-def test_a_second_open_while_the_first_is_still_open_is_locked_out(tmp_path: Path) -> None:
-    collection_root = tmp_path / "vacation"
-    collection_root.mkdir()
-
+def test_a_second_open_while_the_first_is_still_open_is_locked_out(
+    empty_collection_root: Path,
+) -> None:
+    collection_root = empty_collection_root
     first = open_collection(collection_root)
     try:
         with pytest.raises(CollectionLockedError):
@@ -84,10 +91,8 @@ def test_a_second_open_while_the_first_is_still_open_is_locked_out(tmp_path: Pat
         first.close()
 
 
-def test_closing_releases_the_lock_for_a_subsequent_open(tmp_path: Path) -> None:
-    collection_root = tmp_path / "vacation"
-    collection_root.mkdir()
-
+def test_closing_releases_the_lock_for_a_subsequent_open(empty_collection_root: Path) -> None:
+    collection_root = empty_collection_root
     first = open_collection(collection_root)
     first.close()
 

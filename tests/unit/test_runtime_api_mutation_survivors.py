@@ -38,19 +38,15 @@ def test_optional_and_union_annotations_resolve_to_the_documented_types() -> Non
 
 def test_configuration_parameters_remain_keyword_only() -> None:
     signatures = (
-        (MediaRepository.update, ("relative_path", "content_hash", "size", "mtime", "state")),
-        (Reconciler.reconcile, ("unreadable_paths",)),
-        (run_reconciliation, ("on_progress",)),
-        (TagCorrelationRepository.__init__, ("clock",)),
-        (TagCorrelationRepository.recompute, ("min_cooccurrence",)),
-        (
-            TagCorrelationRepository.ensure_fresh,
-            ("min_cooccurrence", "max_age_seconds"),
-        ),
+        (MediaRepository.update, "fields", inspect.Parameter.VAR_KEYWORD),
+        (Reconciler.reconcile, "unreadable_paths", inspect.Parameter.KEYWORD_ONLY),
+        (run_reconciliation, "on_progress", inspect.Parameter.KEYWORD_ONLY),
+        (TagCorrelationRepository.__init__, "clock", inspect.Parameter.KEYWORD_ONLY),
+        (TagCorrelationRepository.recompute, "min_cooccurrence", inspect.Parameter.KEYWORD_ONLY),
+        (TagCorrelationRepository.ensure_fresh, "min_cooccurrence", inspect.Parameter.KEYWORD_ONLY),
+        (TagCorrelationRepository.ensure_fresh, "max_age_seconds", inspect.Parameter.KEYWORD_ONLY),
     )
 
-    for function, parameter_names in signatures:
+    for function, parameter_name, expected_kind in signatures:
         parameters = inspect.signature(function).parameters
-        assert all(
-            parameters[name].kind is inspect.Parameter.KEYWORD_ONLY for name in parameter_names
-        )
+        assert parameters[parameter_name].kind is expected_kind

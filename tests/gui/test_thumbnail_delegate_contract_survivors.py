@@ -5,13 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QRect, QRectF, Qt
-from PySide6.QtGui import QPainter, QPainterPath
+from PySide6.QtGui import QPainterPath
 from PySide6.QtWidgets import QStyle, QStyleOptionViewItem, QWidget
 from pytestqt.qtbot import QtBot
 
 from prismic.ui.result_model import MediaIdRole
 from prismic.ui.thumbnail_delegate import ThumbnailDelegate
 from prismic.ui.thumbnail_services import ThumbnailServices
+from tests.gui._paint_helpers import PaintStub
 
 
 class _Index:
@@ -22,31 +23,11 @@ class _Index:
         return self._values.get(role)
 
 
-class _Metrics:
-    def elidedText(self, text: str, _mode: Qt.TextElideMode, _width: int) -> str:
-        return text
-
-
-class _Painter:
+class _Painter(PaintStub):
     def __init__(self) -> None:
         self.text_rects: list[QRectF] = []
         self.clips: list[QPainterPath] = []
         self.fills: list[tuple[QRectF, object]] = []
-
-    def save(self) -> None:
-        pass
-
-    def restore(self) -> None:
-        pass
-
-    def setRenderHint(self, _hint: QPainter.RenderHint) -> None:
-        pass
-
-    def setPen(self, _pen: object) -> None:
-        pass
-
-    def fontMetrics(self) -> _Metrics:
-        return _Metrics()
 
     def drawText(self, rect: QRectF, _alignment: Qt.AlignmentFlag, _text: str) -> None:
         self.text_rects.append(rect)

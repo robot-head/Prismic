@@ -17,6 +17,18 @@ def _focus(qtbot: QtBot, widget: QWidget) -> None:
     qtbot.waitUntil(lambda: widget.hasFocus(), timeout=1000)
 
 
+def _focus_item_tag_search(qtbot: QtBot, window: MainWindow) -> None:
+    _focus(qtbot, window.item_tag_panel.search_box)
+
+
+def _navigate_right_to(qtbot: QtBot, window: MainWindow, media_id: int) -> None:
+    _focus(qtbot, window.result_list)
+    qtbot.keyClick(window.result_list, Qt.Key.Key_Right)
+    session = window.session
+    assert session is not None
+    assert session.state.current_item == media_id
+
+
 def _set_current_item(window: MainWindow, index: int = 0) -> tuple[PrismicSession, int]:
     session = window.session
     assert session is not None
@@ -26,10 +38,8 @@ def _set_current_item(window: MainWindow, index: int = 0) -> tuple[PrismicSessio
 
 
 def _set_first_of_two_results(window: MainWindow) -> tuple[PrismicSession, int, int]:
-    session = window.session
-    assert session is not None
-    first_id, second_id = session.state.result_set
-    session.state.current_item = first_id
+    session, first_id = _set_current_item(window)
+    second_id = session.state.result_set[1]
     window._sync_result_selection()
     return session, first_id, second_id
 
@@ -37,6 +47,26 @@ def _set_first_of_two_results(window: MainWindow) -> tuple[PrismicSession, int, 
 def _tap_modifier(qtbot: QtBot, widget: QWidget, key: Qt.Key = Qt.Key.Key_Control) -> None:
     qtbot.keyPress(widget, key)
     qtbot.keyRelease(widget, key)
+
+
+def _tap_modifier_and_expect_mode(qtbot: QtBot, window: MainWindow, expected: bool) -> None:
+    _tap_modifier(qtbot, window.result_list)
+    assert window._tag_shortcut_mode_action.isChecked() is expected
+
+
+def _trigger_modifier_tap(qtbot: QtBot, window: MainWindow) -> None:
+    _focus(qtbot, window.result_list)
+    _tap_modifier(qtbot, window.result_list)
+
+
+def _click_and_expect_focus(qtbot: QtBot, clicked: QWidget, expected: QWidget) -> None:
+    qtbot.mouseClick(clicked, Qt.MouseButton.LeftButton)
+    assert expected.hasFocus()
+
+
+def _assert_focus_mode_exited(window: MainWindow) -> None:
+    assert window._focus_mode_action.isChecked() is False
+    assert window.result_list.isVisible()
 
 
 def _create_one_tag(window: MainWindow, name: str = "vacation") -> PrismicSession:
@@ -139,11 +169,7 @@ def test_up_down_navigate_even_while_a_tag_search_box_has_focus(
     exempted while text-editing has focus -- they have no meaning in a
     single-line box (unlike Left/Right, which move the caret), so result-
     list navigation should stay reachable no matter where the caret is."""
-    session = window.session
-    assert session is not None
-    first_id, second_id = session.state.result_set
-    session.state.current_item = first_id
-    window._sync_result_selection()
+    session, first_id, second_id = _set_first_of_two_results(window)
 
     _focus(qtbot, window.item_tag_panel.search_box)
 
@@ -322,17 +348,10 @@ def test_a_letter_key_is_a_no_op_while_the_edit_panel_is_hidden_in_focus_mode(
 def test_escape_dismisses_typing_focus_from_either_search_box(
     qtbot: QtBot, window: MainWindow
 ) -> None:
-    _focus(qtbot, window.item_tag_panel.search_box)
-
-    qtbot.keyClick(window.item_tag_panel.search_box, Qt.Key.Key_Escape)
-
-    assert window.result_list.hasFocus()
-
-    _focus(qtbot, window.filter_panel.search_box)
-
-    qtbot.keyClick(window.filter_panel.search_box, Qt.Key.Key_Escape)
-
-    assert window.result_list.hasFocus()
+    for search_box in (window.item_tag_panel.search_box, window.filter_panel.search_box):
+        _focus(qtbot, search_box)
+        qtbot.keyClick(search_box, Qt.Key.Key_Escape)
+        assert window.result_list.hasFocus()
 
 
 # -- Clicking outside a text input or a button also dismisses typing focus --
@@ -347,31 +366,23 @@ def test_clicking_blank_panel_space_dismisses_typing_focus(
     """The header (title + search box) has no click handling of its own,
     so a real click actually lands on it -- exactly the "blank space
     around 'Edit this file'" case."""
-    _focus(qtbot, window.item_tag_panel.search_box)
-
-    qtbot.mouseClick(window.item_tag_panel.header, Qt.MouseButton.LeftButton)
-
-    assert window.result_list.hasFocus()
+    _click_and_expect_focus(qtbot, window.item_tag_panel.header, window.result_list)
 
 
 def test_clicking_the_other_panels_blank_space_also_dismisses(
     qtbot: QtBot, window: MainWindow
 ) -> None:
     _focus(qtbot, window.filter_panel.search_box)
-
-    qtbot.mouseClick(window.filter_panel.header, Qt.MouseButton.LeftButton)
-
-    assert window.result_list.hasFocus()
+    _click_and_expect_focus(qtbot, window.filter_panel.header, window.result_list)
 
 
 def test_clicking_inside_the_focused_search_box_does_not_dismiss_it(
     qtbot: QtBot, window: MainWindow
 ) -> None:
-    _focus(qtbot, window.item_tag_panel.search_box)
-
-    qtbot.mouseClick(window.item_tag_panel.search_box, Qt.MouseButton.LeftButton)
-
-    assert window.item_tag_panel.search_box.hasFocus()
+    _focus_item_tag_search(qtbot, window)
+    _click_and_expect_focus(
+        qtbot, window.item_tag_panel.search_box, window.item_tag_panel.search_box
+    )
 
 
 def test_clicking_the_menu_bar_dismisses_typing_focus(qtbot: QtBot, window: MainWindow) -> None:
@@ -404,34 +415,22 @@ def test_clicking_a_button_does_not_dismiss_typing_focus(qtbot: QtBot, window: M
 def test_clicking_elsewhere_is_a_no_op_when_nothing_is_being_typed_into(
     qtbot: QtBot, window: MainWindow
 ) -> None:
-    _focus(qtbot, window.result_list)
-
-    qtbot.mouseClick(window.item_tag_panel.header, Qt.MouseButton.LeftButton)
-
-    assert window.result_list.hasFocus()  # unaffected, not forced back to itself
+    _click_and_expect_focus(qtbot, window.item_tag_panel.header, window.result_list)
 
 
 def test_navigation_still_works_when_the_result_list_has_focus(
     qtbot: QtBot, window: MainWindow
 ) -> None:
-    session, _first_id, second_id = _set_first_of_two_results(window)
-
-    _focus(qtbot, window.result_list)
-    qtbot.keyClick(window.result_list, Qt.Key.Key_Right)
-
-    assert session.state.current_item == second_id
+    _session, _first_id, second_id = _set_first_of_two_results(window)
+    _navigate_right_to(qtbot, window, second_id)
 
 
 def test_space_toggles_focus_mode_hiding_every_panel_but_the_viewer(
     qtbot: QtBot, window: MainWindow
 ) -> None:
-    _focus(qtbot, window.result_list)
     assert window.result_list.isVisible()
     assert window._tag_splitter.isVisible()
-
-    qtbot.keyClick(window.result_list, Qt.Key.Key_Space)
-
-    assert window._focus_mode_action.isChecked() is True
+    _enter_focus_mode(qtbot, window)
     assert window.result_list.isVisible() is False
     assert window._tag_splitter.isVisible() is False
     assert window.menuBar().isVisible() is False
@@ -450,8 +449,7 @@ def test_escape_exits_focus_mode(qtbot: QtBot, window: MainWindow) -> None:
 
     qtbot.keyClick(window.result_list, Qt.Key.Key_Escape)
 
-    assert window._focus_mode_action.isChecked() is False
-    assert window.result_list.isVisible()
+    _assert_focus_mode_exited(window)
 
 
 def test_opening_a_collection_resets_focus_mode(
@@ -461,8 +459,7 @@ def test_opening_a_collection_resets_focus_mode(
 
     window.open_collection(collection_dir)
 
-    assert window._focus_mode_action.isChecked() is False
-    assert window.result_list.isVisible()
+    _assert_focus_mode_exited(window)
 
 
 def test_digit_toggles_the_unselected_tag_numbered_with_it(
@@ -477,26 +474,24 @@ def test_digit_toggles_the_unselected_tag_numbered_with_it(
     assert _press_shortcut_and_read_tags(qtbot, window, current_id, Qt.Key.Key_1) == [tag_id]
 
 
-def test_digit_toggles_a_tag_even_while_a_search_box_is_focused(
+def test_quick_select_toggles_from_search_and_after_rebinding(
     qtbot: QtBot, window: MainWindow
 ) -> None:
     session, current_id, tag_id = _first_unselected_tag(window)
 
-    _focus(qtbot, window.item_tag_panel.search_box)
-    qtbot.keyClick(window.item_tag_panel.search_box, Qt.Key.Key_1)
+    for search_box in (window.item_tag_panel.search_box, window.filter_panel.search_box):
+        _focus(qtbot, search_box)
+        qtbot.keyClick(search_box, Qt.Key.Key_1)
 
-    assert window.item_tag_panel.search_box.text() == ""  # not typed
-    assert [t.id for t in session.mappings.tags_for_media(current_id)] == [tag_id]
+        assert search_box.text() == ""  # the digit toggles its tag instead of being typed
+        assert [t.id for t in session.mappings.tags_for_media(current_id)] == [tag_id]
+        window._on_item_tag_toggle(tag_id)  # reset before testing the other search box
 
-    # Also true from the *filter* search box, per the request this
-    # implements -- the toggle still applies to the Edit list regardless
-    # of which of the two boxes has focus.
-    window._on_item_tag_toggle(tag_id)  # untoggle it again
-    _focus(qtbot, window.filter_panel.search_box)
-    qtbot.keyClick(window.filter_panel.search_box, Qt.Key.Key_1)
-
-    assert window.filter_panel.search_box.text() == ""
-    assert [t.id for t in session.mappings.tags_for_media(current_id)] == [tag_id]
+    rebind(window, shortcuts.quick_select_id(0), "Q")
+    _focus(qtbot, window.result_list)
+    assert _press_shortcut_and_read_tags(qtbot, window, current_id, Qt.Key.Key_Q) == [tag_id]
+    # The old digit is released after rebinding, so it must not toggle the tag off.
+    assert _press_shortcut_and_read_tags(qtbot, window, current_id, Qt.Key.Key_1) == [tag_id]
 
 
 @pytest.mark.parametrize(
@@ -539,9 +534,7 @@ def test_ctrl_tapped_alone_toggles_which_tags_are_numbered(
 
     assert window._tag_shortcut_mode_action.isChecked() is True
 
-    _tap_modifier(qtbot, window.result_list)
-
-    assert window._tag_shortcut_mode_action.isChecked() is False
+    _tap_modifier_and_expect_mode(qtbot, window, expected=False)
 
 
 def test_ctrl_plus_another_key_does_not_toggle_the_mode_on_release(
@@ -625,9 +618,7 @@ def test_escape_still_leaves_focus_mode_when_dismiss_is_unbound(
     """A deliberate safety hatch: focus mode hides the menu bar, so a user
     who clears both Dismiss and Focus Mode would otherwise be stuck in it
     with no way back short of quitting."""
-    _focus(qtbot, window.result_list)
-    qtbot.keyClick(window.result_list, Qt.Key.Key_Space)
-    assert window._focus_mode_action.isChecked() is True
+    _enter_focus_mode(qtbot, window)
     rebind(window, shortcuts.DISMISS, "")
 
     qtbot.keyClick(window.result_list, Qt.Key.Key_Escape)
@@ -692,20 +683,6 @@ def test_rebinding_play_pause_moves_the_viewer_button_shortcut(window: MainWindo
     assert window.viewer.play_pause_button.shortcut() == QKeySequence("F10")
 
 
-def test_rebinding_a_quick_select_key_toggles_the_same_tag(
-    qtbot: QtBot, window: MainWindow
-) -> None:
-    session, current_id, tag_id = _first_unselected_tag(window)
-    rebind(window, shortcuts.quick_select_id(0), "Q")
-
-    _focus(qtbot, window.result_list)
-    assert _press_shortcut_and_read_tags(qtbot, window, current_id, Qt.Key.Key_Q) == [tag_id]
-
-    # ...and the digit it used to be on is genuinely free again, not
-    # still quietly wired up alongside the new key.
-    assert _press_shortcut_and_read_tags(qtbot, window, current_id, Qt.Key.Key_1) == [tag_id]
-
-
 def test_a_rebound_quick_select_key_is_still_typeable_with_ctrl(
     qtbot: QtBot, window: MainWindow
 ) -> None:
@@ -750,9 +727,7 @@ def test_rebinding_the_numbering_swap_moves_it_to_another_modifier(
     assert window._tag_shortcut_mode_action.isChecked() is True
 
     # Ctrl is an ordinary modifier again, with no gesture attached.
-    _tap_modifier(qtbot, window.result_list)
-
-    assert window._tag_shortcut_mode_action.isChecked() is True
+    _tap_modifier_and_expect_mode(qtbot, window, expected=True)
 
 
 def test_unbinding_the_numbering_swap_disables_the_gesture(
@@ -761,9 +736,7 @@ def test_unbinding_the_numbering_swap_disables_the_gesture(
     rebind(window, shortcuts.SWAP_TAG_NUMBERING, "")
     _focus(qtbot, window.result_list)
 
-    _tap_modifier(qtbot, window.result_list)
-
-    assert window._tag_shortcut_mode_action.isChecked() is False
+    _tap_modifier_and_expect_mode(qtbot, window, expected=False)
 
 
 def test_the_numbering_swap_works_on_an_ordinary_key_too(qtbot: QtBot, window: MainWindow) -> None:
@@ -794,8 +767,7 @@ def test_any_shortcut_can_be_bound_to_a_modifier_tap(qtbot: QtBot, window: MainW
     rebind(window, shortcuts.SWAP_TAG_NUMBERING, "")  # free Ctrl up first
     rebind(window, shortcuts.NAVIGATE_NEXT, "Ctrl")
 
-    _focus(qtbot, window.result_list)
-    _tap_modifier(qtbot, window.result_list)
+    _trigger_modifier_tap(qtbot, window)
 
     assert session.state.current_item == second_id
 
@@ -809,8 +781,7 @@ def test_a_menu_command_can_be_bound_to_a_modifier_tap(
     rebind(window, shortcuts.SWAP_TAG_NUMBERING, "")
     rebind(window, shortcuts.OPEN_SETTINGS, "Ctrl")
 
-    _focus(qtbot, window.result_list)
-    _tap_modifier(qtbot, window.result_list)
+    _trigger_modifier_tap(qtbot, window)
 
     assert len(opened) == 1
 
@@ -824,8 +795,7 @@ def test_a_quick_select_shortcut_can_be_bound_to_a_modifier_tap(
     rebind(window, shortcuts.SWAP_TAG_NUMBERING, "")
     rebind(window, shortcuts.quick_select_id(0), "Ctrl")
 
-    _focus(qtbot, window.result_list)
-    _tap_modifier(qtbot, window.result_list)
+    _trigger_modifier_tap(qtbot, window)
 
     assert [t.id for t in session.mappings.tags_for_media(current_id)] == [tag_id]
 
@@ -854,10 +824,7 @@ def test_shortcuts_stand_down_while_a_modal_dialog_is_open(
 
     blocker.close()
     qtbot.waitUntil(lambda: QApplication.activeModalWidget() is None, timeout=1000)
-    _focus(qtbot, window.result_list)
-    qtbot.keyClick(window.result_list, Qt.Key.Key_Right)
-
-    assert session.state.current_item != first_id  # working again afterwards
+    _navigate_right_to(qtbot, window, session.state.result_set[1])
 
 
 def test_opening_settings_applies_what_is_changed_in_it(

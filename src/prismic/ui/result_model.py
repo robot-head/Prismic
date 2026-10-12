@@ -8,39 +8,30 @@ already the deterministic relative-path order the query layer guarantees.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QPersistentModelIndex, Qt
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, Qt
 
 from prismic.domain.media import Media
-from prismic.ui._model_utils import find_row_by_id, top_level_row_count
+from prismic.ui._identified_list_model import _IdentifiedListModel
 
 _Index = QModelIndex | QPersistentModelIndex
 
 MediaIdRole = Qt.ItemDataRole.UserRole + 1
 
 
-class ResultListModel(QAbstractListModel):
-    def __init__(self, parent: QObject | None = None) -> None:
-        super().__init__(parent)
-        self._media: list[Media] = []
-
+class ResultListModel(_IdentifiedListModel[Media]):
     def set_media(self, media: list[Media]) -> None:
-        self.beginResetModel()
-        self._media = media
-        self.endResetModel()
+        self._reset_items(media)
 
     def media_at(self, row: int) -> Media:
-        return self._media[row]
+        return self._item_at(row)
 
     def row_for_media_id(self, media_id: int) -> int | None:
-        return find_row_by_id(self._media, media_id)
-
-    def rowCount(self, parent: _Index | None = None) -> int:
-        return top_level_row_count(parent, len(self._media))
+        return self._row_for_id(media_id)
 
     def data(self, index: _Index, role: int = Qt.ItemDataRole.DisplayRole) -> object:
-        if not index.isValid() or not (0 <= index.row() < len(self._media)):
+        media = self._item_for_index(index)
+        if media is None:
             return None
-        media = self._media[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
             return media.relative_path
         if role == MediaIdRole:

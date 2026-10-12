@@ -1,19 +1,14 @@
 """Boundary-pixel checks for the shared video play badge."""
 
-from PySide6.QtCore import QRectF
-from PySide6.QtGui import QColor, QImage, QPainter
+from PySide6.QtGui import QColor
 from pytestqt.qtbot import QtBot
 
 from prismic.ui import theme
-from prismic.ui._thumbnail_badge import paint_play_badge
+from tests.gui._thumbnail_helpers import render_play_badge
 
 
 def test_play_triangle_keeps_its_expected_bounds(qtbot: QtBot) -> None:
-    image = QImage(100, 100, QImage.Format.Format_ARGB32_Premultiplied)
-    image.fill(QColor("#ff00ff"))
-    painter = QPainter(image)
-    paint_play_badge(painter, QRectF(10, 20, 80, 60), size_fraction=0.25)
-    painter.end()
+    image, _background = render_play_badge()
 
     primary = QColor(theme.TEXT_PRIMARY)
     # The triangle has a narrow left edge, a 13.5px half-height, and a tip

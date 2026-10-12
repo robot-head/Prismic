@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from prismic.persistence.errors import IncompatibleDatabaseError
@@ -41,3 +43,16 @@ def connect(database_path: Path) -> sqlite3.Connection:
 def schema_version(connection: sqlite3.Connection) -> int:
     row = connection.execute("PRAGMA user_version").fetchone()
     return int(row[0])
+
+
+@contextmanager
+def transaction(connection: sqlite3.Connection) -> Iterator[None]:
+    """Run a unit of work atomically on an autocommit connection."""
+    connection.execute("BEGIN")
+    try:
+        yield
+    except Exception:
+        connection.execute("ROLLBACK")
+        raise
+    else:
+        connection.execute("COMMIT")

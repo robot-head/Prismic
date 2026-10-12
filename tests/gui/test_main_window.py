@@ -8,7 +8,12 @@ from prismic.application.commands.mapping_commands import MappingAddCommand
 from prismic.domain.tag import Tag
 from prismic.ui.column_splitter import _ColumnSplitterHandle
 from prismic.ui.main_window import MainWindow
-from tests.gui.helpers import open_and_wait, refresh_and_hover_item_tag
+from tests.gui.helpers import (
+    create_tag,
+    open_and_create_tag,
+    open_and_wait,
+    refresh_and_hover_item_tag,
+)
 
 
 def _broken_collection(tmp_path: Path) -> Path:
@@ -16,6 +21,12 @@ def _broken_collection(tmp_path: Path) -> Path:
     root.mkdir()
     (root / "broken.prismic").write_bytes(b"not a real database")
     return root
+
+
+def _broken_collection_with_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, list[str]]:
+    return _broken_collection(tmp_path), _capture_critical_messages(monkeypatch)
 
 
 def _capture_critical_messages(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -51,6 +62,12 @@ def _open_show_and_wait(qtbot: QtBot, window: MainWindow, collection_dir: Path) 
     open_and_wait(qtbot, window, collection_dir)
     window.show()
     qtbot.waitExposed(window)
+
+
+@pytest.fixture
+def shown_window(qtbot: QtBot, window: MainWindow, collection_dir: Path) -> MainWindow:
+    _open_show_and_wait(qtbot, window, collection_dir)
+    return window
 
 
 def _assert_no_hover_hint(window: MainWindow, row: int = 10) -> None:
@@ -91,8 +108,7 @@ def test_initial_path_opens_after_construction_not_synchronously_in_init(
 def test_initial_path_failure_still_shows_the_error_after_construction(
     qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root = _broken_collection(tmp_path)
-    shown_messages = _capture_critical_messages(monkeypatch)
+    root, shown_messages = _broken_collection_with_messages(tmp_path, monkeypatch)
 
     win = MainWindow(initial_path=root)
     qtbot.addWidget(win)
@@ -173,27 +189,24 @@ def test_scan_progress_bar_is_hidden_once_the_initial_scan_completes(
 
 
 def test_rescanning_shows_progress_that_reaches_completion(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
+    qtbot: QtBot, shown_window: MainWindow
 ) -> None:
-    _open_show_and_wait(qtbot, window, collection_dir)
-
     # Nothing changed on disk, so this rescan has the same 2 files -- and
     # the previous scan (opening the collection) also saw 2, so this is the
     # simple case where the progress bar's denominator is exactly right.
-    window._rescan()
+    shown_window._rescan()
 
-    assert window._scan_progress_bar.isVisible()
-    assert window._scan_progress_bar.maximum() == 0  # reset to indeterminate first
-    qtbot.waitUntil(lambda: window._scan_progress_bar.isHidden(), timeout=5000)
-    assert window._scan_progress_bar.maximum() == 2
-    assert window._scan_progress_bar.value() == 2
+    assert shown_window._scan_progress_bar.isVisible()
+    assert shown_window._scan_progress_bar.maximum() == 0  # reset to indeterminate first
+    qtbot.waitUntil(lambda: shown_window._scan_progress_bar.isHidden(), timeout=5000)
+    assert shown_window._scan_progress_bar.maximum() == 2
+    assert shown_window._scan_progress_bar.value() == 2
 
 
 def test_opening_a_bad_collection_shows_an_error_not_a_crash(
     qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root = _broken_collection(tmp_path)
-    shown_messages = _capture_critical_messages(monkeypatch)
+    root, shown_messages = _broken_collection_with_messages(tmp_path, monkeypatch)
 
     window.open_collection(root)
 
@@ -201,15 +214,17 @@ def test_opening_a_bad_collection_shows_an_error_not_a_crash(
     assert len(shown_messages) == 1
 
 
-def test_create_tag_via_the_ui_appears_in_the_filter_panel(
+def test_created_tag_appears_in_the_filter_panel_and_item_tag_hint(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-
-    window._on_tag_create("vacation")
+    open_and_create_tag(qtbot, window, collection_dir)
 
     assert [t.name for t in window.session.tags.list_all()] == ["vacation"]  # type: ignore[union-attr]
     assert window.filter_panel.model.rowCount() == 1
+    refresh_and_hover_item_tag(window, 0)
+
+    assert [label.text() for label in window._hover_bar._key_labels] == ["1"]
+    assert window._hover_bar._text_label.text() == 'Toggle "vacation" on the current item'
 
 
 @pytest.mark.parametrize("delete", [False, True], ids=["rename", "delete"])
@@ -217,8 +232,7 @@ def test_renaming_or_deleting_a_tag_via_the_ui(
     qtbot: QtBot, window: MainWindow, collection_dir: Path, delete: bool
 ) -> None:
     open_and_wait(qtbot, window, collection_dir)
-    window._on_tag_create("vacation")
-    tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
+    tag = create_tag(window)
 
     if delete:
         window._on_tag_delete(tag.id)
@@ -235,8 +249,7 @@ def test_filter_selection_narrows_the_result_view(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
     open_and_wait(qtbot, window, collection_dir)
-    window._on_tag_create("vacation")
-    tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
+    tag = create_tag(window)
     first_media = window.session.media.list_all()[0]  # type: ignore[union-attr]
     window.session.execute(  # type: ignore[union-attr]
         MappingAddCommand(media_id=first_media.id, tag_id=tag.id)
@@ -293,8 +306,7 @@ def test_item_create_and_check_with_an_existing_exact_name_reuses_it_silently(
     must apply the existing tag with no duplicate-name warning dialog."""
     open_and_wait(qtbot, window, collection_dir)
     current_id = _select_first_item(window)
-    window._on_tag_create("vacation")
-    existing = window.session.tags.list_all()[0]  # type: ignore[union-attr]
+    existing = create_tag(window)
 
     shown: list[str] = []
     monkeypatch.setattr(
@@ -347,47 +359,28 @@ def test_in_viewer_tag_toggle_maps_the_current_item(
     assert window.session.mappings.tags_for_media(current_id) == []  # type: ignore[union-attr]
 
 
-def test_item_tag_toggle_clears_its_search_box_without_losing_focus(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
+@pytest.mark.parametrize("scope", ["item", "filter"])
+def test_tag_toggle_clears_its_search_box_without_losing_focus(
+    qtbot: QtBot, shown_window: MainWindow, scope: str
 ) -> None:
-    _open_show_and_wait(qtbot, window, collection_dir)
-    tag, _current_id = _create_tag_on_current_item(window, "vacation")
-    window.item_tag_panel.search_box.setText("vac")
-    window.item_tag_panel.search_box.setFocus()
-    qtbot.waitUntil(lambda: window.item_tag_panel.search_box.hasFocus(), timeout=1000)
+    if scope == "item":
+        tag, _current_id = _create_tag_on_current_item(shown_window, "vacation")
+        panel = shown_window.item_tag_panel
+        toggle = shown_window._on_item_tag_toggle
+    else:
+        tag = create_tag(shown_window)
+        shown_window._refresh_all()
+        panel = shown_window.filter_panel
+        toggle = shown_window._on_filter_toggle
 
-    window._on_item_tag_toggle(tag.id)
+    panel.search_box.setText("vac")
+    panel.search_box.setFocus()
+    qtbot.waitUntil(lambda: panel.search_box.hasFocus(), timeout=1000)
 
-    assert window.item_tag_panel.search_box.text() == ""
-    assert window.item_tag_panel.search_box.hasFocus()
+    toggle(tag.id)
 
-
-def test_filter_toggle_clears_its_search_box_without_losing_focus(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
-) -> None:
-    _open_show_and_wait(qtbot, window, collection_dir)
-    window._on_tag_create("vacation")
-    tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
-    window._refresh_all()
-    window.filter_panel.search_box.setText("vac")
-    window.filter_panel.search_box.setFocus()
-    qtbot.waitUntil(lambda: window.filter_panel.search_box.hasFocus(), timeout=1000)
-
-    window._on_filter_toggle(tag.id)
-
-    assert window.filter_panel.search_box.text() == ""
-    assert window.filter_panel.search_box.hasFocus()
-
-
-def test_item_tag_hover_shows_digit_hint_within_the_shortcut_group(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
-) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    window._on_tag_create("vacation")
-    refresh_and_hover_item_tag(window, 0)
-
-    assert [label.text() for label in window._hover_bar._key_labels] == ["1"]
-    assert window._hover_bar._text_label.text() == 'Toggle "vacation" on the current item'
+    assert panel.search_box.text() == ""
+    assert panel.search_box.hasFocus()
 
 
 def test_item_tag_hover_past_the_shortcut_group_in_its_own_active_group_clears(
@@ -417,8 +410,7 @@ def test_item_tag_hover_over_selected_group_names_selected_tags(
     "unselected tags" text a mode-based (rather than row-based) check
     would produce."""
     open_and_wait(qtbot, window, collection_dir)
-    window._on_tag_create("vacation")
-    tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
+    tag = create_tag(window)
     current_id = window.session.state.result_set[0]  # type: ignore[union-attr]
     window.session.state.current_item = current_id  # type: ignore[union-attr]
     window._on_item_tag_toggle(tag.id)  # select it -- moves it into the checked group

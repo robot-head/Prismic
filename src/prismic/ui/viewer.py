@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QStackedWidget,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -28,6 +27,7 @@ from prismic.media.formats import SUPPORTED_VIDEO_EXTENSIONS
 from prismic.media.image import ImageLoadError, load_image
 from prismic.media.loader import ImageLoader, ImageLoadResult
 from prismic.media.video import VideoPlayer
+from prismic.ui._layouts import vertical_stack
 from prismic.ui.future_watcher import FutureWatcher
 from prismic.ui.image_view import ImageView
 
@@ -95,11 +95,7 @@ class MediaViewer(QWidget):
         controls_layout.addWidget(self._seek_slider)
         self._controls.setVisible(False)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self._stack)
-        layout.addWidget(self._controls)
+        vertical_stack(self, (self._stack, self._controls))
 
         self._current_path: Path | None = None
         self._controls_suppressed = False

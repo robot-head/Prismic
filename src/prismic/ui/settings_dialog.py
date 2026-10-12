@@ -43,24 +43,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from prismic.application.input.shortcuts import (
+from prismic.application import tag_ranking_settings as ranking_settings
+from prismic.application.input import (
     SHORTCUTS,
     ShortcutBindings,
     ShortcutDefinition,
     ShortcutScope,
-    is_modifier_only,
-    keycaps,
-    normalize,
 )
-from prismic.application.input.shortcuts import (
-    definition as shortcut_definition,
-)
-from prismic.application.tag_ranking_settings import (
-    DEFAULT_CORRELATION_THRESHOLD,
-    DEFAULT_MEGA_POPULAR_THRESHOLD,
-    TagRankingSettings,
-    TagRankingSettingsStore,
-)
+from prismic.application.input.shortcuts import definition as shortcut_definition
+from prismic.application.input.shortcuts import is_modifier_only, keycaps, normalize
 from prismic.persistence.repositories.tag_correlation_repository import DEFAULT_MIN_COOCCURRENCE
 from prismic.ui.frameless_dialog import FramelessDialog, MessageDialog
 from prismic.ui.keyboard import MODIFIER_KEY_NAMES, key_text
@@ -258,7 +249,22 @@ class KeyCaptureButton(QPushButton):
         return True
 
 
-class ShortcutRow(QWidget):
+class _SettingRow(QWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("shortcutRow")
+
+
+def _text_column(*widgets: QWidget) -> QVBoxLayout:
+    layout = QVBoxLayout()
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(2)
+    for widget in widgets:
+        layout.addWidget(widget)
+    return layout
+
+
+class ShortcutRow(_SettingRow):
     """One shortcut: what it does on the left, what it's bound to on the
     right, and the two buttons for unbinding it and putting it back."""
 
@@ -271,7 +277,6 @@ class ShortcutRow(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setObjectName("shortcutRow")
         self.definition = definition
         self._bindings = bindings
         # See `binding_display()`: a bare modifier means something
@@ -290,12 +295,7 @@ class ShortcutRow(QWidget):
         self._conflict.setWordWrap(True)
         self._conflict.setVisible(False)
 
-        text_column = QVBoxLayout()
-        text_column.setContentsMargins(0, 0, 0, 0)
-        text_column.setSpacing(2)
-        text_column.addWidget(self._label)
-        text_column.addWidget(self._description)
-        text_column.addWidget(self._conflict)
+        text_column = _text_column(self._label, self._description, self._conflict)
 
         # One editor for every shortcut, with no per-command variations:
         # whether a binding turns out to be a key, a combination or a
@@ -505,7 +505,7 @@ class ShortcutsPanel(QWidget):
         self._on_row_changed()
 
 
-class ThresholdRow(QWidget):
+class ThresholdRow(_SettingRow):
     """One percentage setting: what it does on the left, an editable
     percentage field and a reset-to-default button on the right -- the
     same left-text/right-controls shape as `ShortcutRow`, minus the
@@ -522,7 +522,6 @@ class ThresholdRow(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setObjectName("shortcutRow")
         self._default_fraction = default_fraction
         self._fraction = default_fraction
 
@@ -531,11 +530,7 @@ class ThresholdRow(QWidget):
         text_description = QLabel(description)
         text_description.setObjectName("shortcutDescription")
         text_description.setWordWrap(True)
-        text_column = QVBoxLayout()
-        text_column.setContentsMargins(0, 0, 0, 0)
-        text_column.setSpacing(2)
-        text_column.addWidget(text_label)
-        text_column.addWidget(text_description)
+        text_column = _text_column(text_label, text_description)
 
         self._editor = QLineEdit(self)
         self._editor.setValidator(QIntValidator(1, 100, self))
@@ -589,7 +584,9 @@ class TagRankingPanel(QWidget):
 
     changed = Signal()
 
-    def __init__(self, store: TagRankingSettingsStore, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, store: ranking_settings.TagRankingSettingsStore, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self._store = store
         settings = store.load()
@@ -604,7 +601,7 @@ class TagRankingPanel(QWidget):
             'unchecked list. "Usually" means at least this percentage of '
             "the checked tag's files also carry the other one, counted only "
             f"once both tags appear together on at least {DEFAULT_MIN_COOCCURRENCE} files.",
-            default_fraction=DEFAULT_CORRELATION_THRESHOLD,
+            default_fraction=ranking_settings.DEFAULT_CORRELATION_THRESHOLD,
             parent=self,
         )
         self.correlation_row.set_fraction(settings.correlation_threshold)
@@ -615,7 +612,7 @@ class TagRankingPanel(QWidget):
             "A tag used on at least this percentage of the entire "
             "collection is promoted to the very top of the item tag "
             "panel's unchecked list, regardless of what's already checked.",
-            default_fraction=DEFAULT_MEGA_POPULAR_THRESHOLD,
+            default_fraction=ranking_settings.DEFAULT_MEGA_POPULAR_THRESHOLD,
             parent=self,
         )
         self.mega_popular_row.set_fraction(settings.mega_popular_threshold)
@@ -631,7 +628,7 @@ class TagRankingPanel(QWidget):
 
     def _on_row_changed(self) -> None:
         self._store.save(
-            TagRankingSettings(
+            ranking_settings.TagRankingSettings(
                 correlation_threshold=self.correlation_row.fraction,
                 mega_popular_threshold=self.mega_popular_row.fraction,
             )
@@ -648,7 +645,7 @@ class SettingsDialog(FramelessDialog):
         bindings: ShortcutBindings,
         parent: QWidget | None = None,
         *,
-        tag_ranking_settings: TagRankingSettingsStore | None = None,
+        tag_ranking_settings: ranking_settings.TagRankingSettingsStore | None = None,
     ) -> None:
         super().__init__("Settings", parent, resizable=True)
         self.resize(760, 620)
@@ -657,7 +654,9 @@ class SettingsDialog(FramelessDialog):
         self.shortcuts_panel.changed.connect(self.bindings_changed)
 
         self.tag_ranking_panel = TagRankingPanel(
-            tag_ranking_settings if tag_ranking_settings is not None else TagRankingSettingsStore(),
+            tag_ranking_settings
+            if tag_ranking_settings is not None
+            else ranking_settings.TagRankingSettingsStore(),
             self,
         )
         self.tag_ranking_panel.changed.connect(self.tag_ranking_changed)

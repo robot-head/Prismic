@@ -1,11 +1,7 @@
 import pytest
 
+import prismic.application.commands.mapping_commands as mapping_commands
 from prismic.application.commands.base import CommandContext
-from prismic.application.commands.mapping_commands import (
-    MappingAddCommand,
-    MappingRemoveCommand,
-    MappingSetForManyCommand,
-)
 from prismic.application.errors import UnknownMappingError
 from prismic.domain.media import MediaState
 from prismic.persistence.errors import UnknownMediaError, UnknownTagError
@@ -20,46 +16,60 @@ def _make_media(media: MediaRepository, name: str = "a.jpg") -> int:
 
 def _bulk_mapping_command(
     context: CommandContext, media: MediaRepository, *, adding: bool
-) -> tuple[int, int, int, MappingSetForManyCommand]:
+) -> tuple[int, int, int, mapping_commands.MappingSetForManyCommand]:
     has_it = _make_media(media, "has_it.jpg")
     lacks_it = _make_media(media, "lacks_it.jpg")
     tag = context.tags.create("vacation")
     context.mappings.add(has_it, tag.id)
-    command = MappingSetForManyCommand(
+    command = mapping_commands.MappingSetForManyCommand(
         media_ids=frozenset({has_it, lacks_it}), tag_id=tag.id, adding=adding
     )
     return has_it, lacks_it, tag.id, command
 
 
-def _mapping_remove_command(
-    context: CommandContext, media: MediaRepository
-) -> tuple[int, int, MappingRemoveCommand]:
+def _single_mapping_command(
+    context: CommandContext, media: MediaRepository, *, adding: bool
+) -> tuple[
+    int,
+    int,
+    mapping_commands.MappingAddCommand | mapping_commands.MappingRemoveCommand,
+]:
     media_id = _make_media(media)
     tag = context.tags.create("vacation")
-    context.mappings.add(media_id, tag.id)
-    command = MappingRemoveCommand(media_id=media_id, tag_id=tag.id)
+    if adding:
+        command = mapping_commands.MappingAddCommand(media_id=media_id, tag_id=tag.id)
+    else:
+        context.mappings.add(media_id, tag.id)
+        command = mapping_commands.MappingRemoveCommand(media_id=media_id, tag_id=tag.id)
     return media_id, tag.id, command
 
 
-@pytest.mark.parametrize("undo", [False, True], ids=["execute", "undo"])
-def test_add_execute_creates_the_mapping_and_undo_removes_it(
-    context: CommandContext, media: MediaRepository, undo: bool
+@pytest.mark.parametrize(
+    ("adding", "undo", "remains_mapped"),
+    [
+        (True, False, True),
+        (True, True, False),
+        (False, False, False),
+        (False, True, True),
+    ],
+    ids=["add", "undo-add", "remove", "undo-remove"],
+)
+def test_single_mapping_commands_execute_and_undo(
+    context: CommandContext, media: MediaRepository, adding: bool, undo: bool, remains_mapped: bool
 ) -> None:
-    media_id = _make_media(media)
-    tag = context.tags.create("vacation")
-    command = MappingAddCommand(media_id=media_id, tag_id=tag.id)
+    media_id, tag_id, command = _single_mapping_command(context, media, adding=adding)
 
     command.execute(context)
     if undo:
         command.undo(context)
 
-    expected = [] if undo else [tag.id]
-    assert [mapped_tag.id for mapped_tag in context.mappings.tags_for_media(media_id)] == expected
+    expected_ids = [tag_id] if remains_mapped else []
+    assert [tag.id for tag in context.mappings.tags_for_media(media_id)] == expected_ids
 
 
 def test_add_with_unknown_media_raises(context: CommandContext) -> None:
     tag = context.tags.create("vacation")
-    command = MappingAddCommand(media_id=999, tag_id=tag.id)
+    command = mapping_commands.MappingAddCommand(media_id=999, tag_id=tag.id)
 
     with pytest.raises(UnknownMediaError):
         command.execute(context)
@@ -67,29 +77,10 @@ def test_add_with_unknown_media_raises(context: CommandContext) -> None:
 
 def test_add_with_unknown_tag_raises(context: CommandContext, media: MediaRepository) -> None:
     media_id = _make_media(media)
-    command = MappingAddCommand(media_id=media_id, tag_id=999)
+    command = mapping_commands.MappingAddCommand(media_id=media_id, tag_id=999)
 
     with pytest.raises(UnknownTagError):
         command.execute(context)
-
-
-def test_remove_execute_deletes_the_mapping(
-    context: CommandContext, media: MediaRepository
-) -> None:
-    media_id, _tag_id, command = _mapping_remove_command(context, media)
-
-    command.execute(context)
-
-    assert context.mappings.tags_for_media(media_id) == []
-
-
-def test_remove_undo_recreates_the_mapping(context: CommandContext, media: MediaRepository) -> None:
-    media_id, tag_id, command = _mapping_remove_command(context, media)
-    command.execute(context)
-
-    command.undo(context)
-
-    assert [t.id for t in context.mappings.tags_for_media(media_id)] == [tag_id]
 
 
 def test_remove_a_mapping_that_does_not_exist_raises(
@@ -97,7 +88,7 @@ def test_remove_a_mapping_that_does_not_exist_raises(
 ) -> None:
     media_id = _make_media(media)
     tag = context.tags.create("vacation")
-    command = MappingRemoveCommand(media_id=media_id, tag_id=tag.id)
+    command = mapping_commands.MappingRemoveCommand(media_id=media_id, tag_id=tag.id)
 
     with pytest.raises(UnknownMappingError):
         command.execute(context)
@@ -145,7 +136,9 @@ def test_set_for_many_with_unknown_tag_raises(
     context: CommandContext, media: MediaRepository
 ) -> None:
     media_id = _make_media(media)
-    command = MappingSetForManyCommand(media_ids=frozenset({media_id}), tag_id=999, adding=True)
+    command = mapping_commands.MappingSetForManyCommand(
+        media_ids=frozenset({media_id}), tag_id=999, adding=True
+    )
 
     with pytest.raises(UnknownTagError):
         command.execute(context)

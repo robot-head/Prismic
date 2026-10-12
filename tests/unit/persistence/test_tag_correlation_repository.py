@@ -1,5 +1,7 @@
 import sqlite3
 
+import pytest
+
 from tests.unit import _tag_correlation_support as support
 
 
@@ -24,6 +26,40 @@ def _seed_correlated_pair(
     return ids
 
 
+def _repository_with_correlated_pair(
+    connection: sqlite3.Connection, *, media_count: int = 5
+) -> tuple[dict[str, int], support.TagCorrelationRepository]:
+    ids = _seed_correlated_pair(connection, media_count=media_count)
+    return ids, support.TagCorrelationRepository(connection)
+
+
+def _assign_tag_to_first_media(
+    mappings: support.MappingRepository, tag_id: int, media_count: int
+) -> None:
+    for media_id in range(1, media_count + 1):
+        mappings.add(media_id, tag_id)
+
+
+def _recompute_at_test_floor(repository: support.TagCorrelationRepository) -> None:
+    repository.recompute(min_cooccurrence=5)
+
+
+def _repository_with_prevalent_tags(
+    connection: sqlite3.Connection, prevalence_by_tag: dict[str, int]
+) -> tuple[dict[str, int], support.TagCorrelationRepository]:
+    ids = _seed(
+        connection,
+        media_count=max(prevalence_by_tag.values()),
+        tag_names=list(prevalence_by_tag),
+    )
+    mappings = support.MappingRepository(connection)
+    for name, media_count in prevalence_by_tag.items():
+        _assign_tag_to_first_media(mappings, ids[name], media_count)
+    repository = support.TagCorrelationRepository(connection)
+    _recompute_at_test_floor(repository)
+    return ids, repository
+
+
 def test_recompute_leaves_no_correlations_when_nothing_is_tagged(
     migrated_connection: sqlite3.Connection,
 ) -> None:
@@ -34,42 +70,29 @@ def test_recompute_leaves_no_correlations_when_nothing_is_tagged(
     assert repository.best_correlations_from([1]) == {}
 
 
-def test_recompute_tracks_a_pair_meeting_the_cooccurrence_floor(
+@pytest.mark.parametrize(
+    ("media_count", "expected_included"),
+    [(5, True), (4, False)],
+    ids=["at-floor", "below-floor"],
+)
+def test_recompute_applies_the_cooccurrence_floor(
     migrated_connection: sqlite3.Connection,
+    media_count: int,
+    expected_included: bool,
 ) -> None:
-    ids = _seed_correlated_pair(migrated_connection)
-    repository = support.TagCorrelationRepository(migrated_connection)
+    ids, repository = _repository_with_correlated_pair(migrated_connection, media_count=media_count)
 
-    repository.recompute(min_cooccurrence=5)
+    _recompute_at_test_floor(repository)
 
-    correlations = repository.best_correlations_from([ids["cat"]])
-    assert correlations == {ids["kitten"]: 1.0}
-
-
-def test_recompute_drops_a_pair_below_the_cooccurrence_floor(
-    migrated_connection: sqlite3.Connection,
-) -> None:
-    ids = _seed_correlated_pair(migrated_connection, media_count=4)
-    repository = support.TagCorrelationRepository(migrated_connection)
-
-    repository.recompute(min_cooccurrence=5)
-
-    assert repository.best_correlations_from([ids["cat"]]) == {}
+    expected = {ids["kitten"]: 1.0} if expected_included else {}
+    assert repository.best_correlations_from([ids["cat"]]) == expected
 
 
 def test_correlation_ratio_is_directional(migrated_connection: sqlite3.Connection) -> None:
     """5 files have "cat"; only 5 of those also have "pet" -- but "pet" is
     on many more files overall, so cat->pet is 100% while pet->cat is far
     lower. Both directions are tracked, independently."""
-    ids = _seed(migrated_connection, media_count=15, tag_names=["cat", "pet"])
-    mappings = support.MappingRepository(migrated_connection)
-    for media_id in range(1, 16):
-        mappings.add(media_id, ids["pet"])
-    for media_id in range(1, 6):
-        mappings.add(media_id, ids["cat"])
-    repository = support.TagCorrelationRepository(migrated_connection)
-
-    repository.recompute(min_cooccurrence=5)
+    ids, repository = _repository_with_prevalent_tags(migrated_connection, {"cat": 5, "pet": 15})
 
     cat_to_pet = repository.best_correlations_from([ids["cat"]])
     pet_to_cat = repository.best_correlations_from([ids["pet"]])
@@ -80,19 +103,11 @@ def test_correlation_ratio_is_directional(migrated_connection: sqlite3.Connectio
 def test_best_correlations_from_multiple_tags_takes_the_strongest_match(
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    ids = _seed(migrated_connection, media_count=10, tag_names=["a", "b", "shared"])
-    mappings = support.MappingRepository(migrated_connection)
     # "a" correlates weakly with "shared" (5 of 10), "b" correlates
     # strongly (5 of 5) -- the union should report the stronger ratio.
-    for media_id in range(1, 11):
-        mappings.add(media_id, ids["a"])
-    for media_id in range(1, 6):
-        mappings.add(media_id, ids["b"])
-    for media_id in range(1, 6):
-        mappings.add(media_id, ids["shared"])
-    repository = support.TagCorrelationRepository(migrated_connection)
-
-    repository.recompute(min_cooccurrence=5)
+    ids, repository = _repository_with_prevalent_tags(
+        migrated_connection, {"a": 10, "b": 5, "shared": 5}
+    )
 
     result = repository.best_correlations_from([ids["a"], ids["b"]])
     assert result[ids["shared"]] == 1.0  # from b, not a's weaker 0.5
@@ -101,8 +116,7 @@ def test_best_correlations_from_multiple_tags_takes_the_strongest_match(
 def test_ensure_fresh_recomputes_when_never_computed(
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    ids = _seed_correlated_pair(migrated_connection)
-    repository = support.TagCorrelationRepository(migrated_connection)
+    ids, repository = _repository_with_correlated_pair(migrated_connection)
 
     repository.ensure_fresh(min_cooccurrence=5)
 

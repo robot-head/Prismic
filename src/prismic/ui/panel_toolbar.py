@@ -27,6 +27,10 @@ _BUTTON_SIZE = 22
 _ICON_MARGIN = 5
 
 
+def _set_widget_name(widget: QWidget, name: str) -> None:
+    widget.setObjectName(name)
+
+
 class _IconButton(QToolButton):
     """A hand-painted icon button with shared sizing and rendering.
 
@@ -45,7 +49,7 @@ class _IconButton(QToolButton):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setObjectName("panelToolbarButton")
+        _set_widget_name(self, "panelToolbarButton")
         self.setFixedSize(_BUTTON_SIZE, _BUTTON_SIZE)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
@@ -209,7 +213,6 @@ class PanelToolbar(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setObjectName("panelToolbar")
         # Undo/redo sit to the left of shuffle/full-screen -- a distinct
         # group (momentary actions rather than view toggles), but sharing
         # this row rather than a bar of its own since it's just as much
@@ -227,3 +230,4 @@ class PanelToolbar(QWidget):
         layout.addWidget(self.shuffle_button)
         layout.addWidget(self.fullscreen_button)
         layout.addStretch(1)
+        _set_widget_name(self, "panelToolbar")

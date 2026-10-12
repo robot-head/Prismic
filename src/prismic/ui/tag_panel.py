@@ -23,9 +23,10 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QHoverEvent, QMouseEvent
-from PySide6.QtWidgets import QLabel, QLineEdit, QListView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QLineEdit, QListView, QWidget
 
 from prismic.domain.tag import Tag
+from prismic.ui._layouts import vertical_stack
 from prismic.ui.tag_model import TagListModel
 from prismic.ui.tag_row_delegate import TagRowDelegate
 
@@ -83,17 +84,8 @@ class TagPanel(QWidget):
         # than just the search box itself.
         self.header = QWidget(self)
         self.header.setObjectName("tagPanelHeader")
-        header_layout = QVBoxLayout(self.header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(0)
-        header_layout.addWidget(self.title_label)
-        header_layout.addWidget(self.search_box)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self.header)
-        layout.addWidget(self.list_view, 1)
+        vertical_stack(self.header, (self.title_label, self.search_box))
+        vertical_stack(self, (self.header, self.list_view), stretch_index=1)
 
     def set_tags(self, tags: list[Tag], checked_ids: frozenset[int]) -> None:
         self._tags = tags

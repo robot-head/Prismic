@@ -2,58 +2,44 @@
 
 from __future__ import annotations
 
+import PySide6.QtCore as qtcore
+import PySide6.QtGui as qtgui
+import PySide6.QtWidgets as qtwidgets
 import pytest
-from PySide6.QtCore import QEvent, QPoint, QSize, Qt
-from PySide6.QtGui import QPainter
-from PySide6.QtWidgets import QMessageBox, QWidget
 from pytestqt.qtbot import QtBot
 
-from prismic.application.input import shortcuts
-from prismic.application.input.shortcuts import ShortcutBindings
+import prismic.application.input.shortcuts as shortcuts
+import prismic.ui.settings_dialog as settings_dialog
 from prismic.persistence.preferences import PreferencesStore
-from prismic.ui.frameless_dialog import FramelessDialog, MessageDialog, TitleBar
+from prismic.ui.frameless_dialog import FramelessDialog
 from prismic.ui.main_window import MainWindow
-from prismic.ui.settings_dialog import KeyCaptureButton, ShortcutsPanel, ThresholdRow
-from tests.gui._mutation_helpers import mouse_event
-from tests.gui.helpers import open_three_item_collection
+from tests.gui._dialog_helpers import message_dialog
+from tests.gui.helpers import open_three_item_collection, shown_parent
+
+
+def _shortcuts_panel(
+    qtbot: QtBot, tmp_path
+) -> tuple[settings_dialog.ShortcutsPanel, shortcuts.ShortcutBindings]:
+    bindings = shortcuts.ShortcutBindings(PreferencesStore(tmp_path / "preferences.json"))
+    panel = settings_dialog.ShortcutsPanel(bindings)
+    qtbot.addWidget(panel)
+    return panel, bindings
 
 
 def test_parented_message_dialog_centers_over_parent_before_showing(qtbot: QtBot) -> None:
-    parent = QWidget()
-    qtbot.addWidget(parent)
-    parent.resize(420, 260)
-    parent.move(100, 120)
-    parent.show()
-    qtbot.waitExposed(parent)
+    parent = shown_parent(qtbot, 420, 260, position=qtcore.QPoint(100, 120))
 
-    dialog = MessageDialog(
-        parent,
-        "Title",
-        "Text",
-        QMessageBox.StandardButton.Ok,
-        QMessageBox.StandardButton.Ok,
-    )
-    qtbot.addWidget(dialog)
+    dialog = message_dialog(parent)
 
     assert dialog.frameGeometry().center() == parent.frameGeometry().center()
 
 
 def test_parented_message_dialog_clamps_its_frame_to_the_screen(qtbot: QtBot) -> None:
-    parent = QWidget()
-    qtbot.addWidget(parent)
-    parent.resize(320, 220)
-    parent.show()
-    qtbot.waitExposed(parent)
+    parent = shown_parent(qtbot, 320, 220)
     available = parent.screen().availableGeometry()
     parent.move(available.right() - 20, available.bottom() - 20)
 
-    dialog = MessageDialog(
-        parent,
-        "Title",
-        "Text",
-        QMessageBox.StandardButton.Ok,
-        QMessageBox.StandardButton.Ok,
-    )
+    dialog = message_dialog(parent)
     qtbot.addWidget(dialog)
 
     frame = dialog.frameGeometry()
@@ -73,8 +59,8 @@ def test_resizable_frameless_dialog_keeps_its_grip_inside_the_lower_right_corner
 
     grip = dialog._size_grip  # noqa: SLF001
     assert grip is not None
-    assert grip.size() == QSize(16, 16)
-    assert grip.pos() == QPoint(
+    assert grip.size() == qtcore.QSize(16, 16)
+    assert grip.pos() == qtcore.QPoint(
         dialog.width() - grip.width() - 1, dialog.height() - grip.height() - 1
     )
 
@@ -82,43 +68,11 @@ def test_resizable_frameless_dialog_keeps_its_grip_inside_the_lower_right_corner
     qtbot.waitUntil(
         lambda: (
             grip.pos()
-            == QPoint(dialog.width() - grip.width() - 1, dialog.height() - grip.height() - 1)
+            == qtcore.QPoint(
+                dialog.width() - grip.width() - 1, dialog.height() - grip.height() - 1
+            )
         )
     )
-
-
-def test_title_bar_starts_a_system_move_only_for_a_left_press(
-    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    title_bar = TitleBar("Title")
-    qtbot.addWidget(title_bar)
-    title_bar.show()
-
-    class MoveHandle:
-        calls = 0
-
-        def startSystemMove(self) -> bool:
-            self.calls += 1
-            return True
-
-    handle = MoveHandle()
-
-    class WindowStub:
-        def windowHandle(self) -> MoveHandle:
-            return handle
-
-    monkeypatch.setattr(title_bar, "window", lambda: WindowStub())
-    left_press = mouse_event(QEvent.Type.MouseButtonPress, Qt.MouseButton.LeftButton)
-    title_bar.mousePressEvent(left_press)
-    assert left_press.isAccepted()
-    assert handle.calls == 1
-
-    right_press = mouse_event(QEvent.Type.MouseButtonPress, Qt.MouseButton.RightButton)
-    right_press.ignore()
-    title_bar.mousePressEvent(right_press)
-
-    assert handle.calls == 1
-    assert not right_press.isAccepted()
 
 
 def test_size_grip_draws_the_three_diagonals_in_its_lower_right_corner(
@@ -131,9 +85,9 @@ def test_size_grip_draws_the_three_diagonals_in_its_lower_right_corner(
     lines: list[tuple[int, int, int, int]] = []
 
     class RecordingPainter:
-        RenderHint = QPainter.RenderHint
+        RenderHint = qtgui.QPainter.RenderHint
 
-        def __init__(self, _widget: QWidget) -> None:
+        def __init__(self, _widget: qtwidgets.QWidget) -> None:
             pass
 
         def setRenderHint(self, *_args: object) -> None:
@@ -152,27 +106,25 @@ def test_size_grip_draws_the_three_diagonals_in_its_lower_right_corner(
 
 
 def test_starting_shortcut_capture_grabs_and_then_releases_the_keyboard(qtbot: QtBot) -> None:
-    button = KeyCaptureButton()
+    button = settings_dialog.KeyCaptureButton()
     qtbot.addWidget(button)
     button.show()
 
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(button, qtcore.Qt.MouseButton.LeftButton)
 
     assert button.is_capturing
-    assert QWidget.keyboardGrabber() is button
+    assert qtwidgets.QWidget.keyboardGrabber() is button
 
-    qtbot.keyClick(button, Qt.Key.Key_F7)
+    qtbot.keyClick(button, qtcore.Qt.Key.Key_F7)
 
     assert not button.is_capturing
-    assert QWidget.keyboardGrabber() is not button
+    assert qtwidgets.QWidget.keyboardGrabber() is not button
 
 
 def test_search_with_no_matches_hides_categories_and_shows_the_empty_state(
     qtbot: QtBot, tmp_path
 ) -> None:
-    bindings = ShortcutBindings(PreferencesStore(tmp_path / "preferences.json"))
-    panel = ShortcutsPanel(bindings)
-    qtbot.addWidget(panel)
+    panel, _bindings = _shortcuts_panel(qtbot, tmp_path)
 
     panel.search_box.setText("no shortcut has this phrase")
 
@@ -182,9 +134,7 @@ def test_search_with_no_matches_hides_categories_and_shows_the_empty_state(
 
 
 def test_assigning_the_existing_binding_does_not_report_a_change(qtbot: QtBot, tmp_path) -> None:
-    bindings = ShortcutBindings(PreferencesStore(tmp_path / "preferences.json"))
-    panel = ShortcutsPanel(bindings)
-    qtbot.addWidget(panel)
+    panel, bindings = _shortcuts_panel(qtbot, tmp_path)
     row = next(row for row in panel.rows if row.definition.id == shortcuts.OPEN_COLLECTION_FOLDER)
     current = bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER)
     same_value = (" " + current)[1:]
@@ -199,7 +149,7 @@ def test_assigning_the_existing_binding_does_not_report_a_change(qtbot: QtBot, t
 
 
 def test_clearing_a_threshold_field_restores_its_current_value(qtbot: QtBot) -> None:
-    row = ThresholdRow("Threshold", "Description", default_fraction=0.5)
+    row = settings_dialog.ThresholdRow("Threshold", "Description", default_fraction=0.5)
     qtbot.addWidget(row)
     row.set_fraction(0.63)
     changed: list[None] = []

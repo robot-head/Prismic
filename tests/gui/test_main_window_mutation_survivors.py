@@ -14,12 +14,20 @@ from prismic.application.input import shortcuts
 from prismic.application.input.shortcuts import ShortcutBindings
 from prismic.application.tag_ranking_settings import TagRankingSettingsStore
 from prismic.domain.tag import Tag
+from prismic.persistence.errors import CollectionLockedError
 from prismic.ui.main_window import MainWindow
 from prismic.ui.result_list_view import ResultListView
 from tests.gui.helpers import (
+    create_tag,
     open_and_wait,
     refresh_and_hover_item_tag,
 )
+
+
+@pytest.fixture
+def opened_window(qtbot: QtBot, window: MainWindow, collection_dir: Path) -> MainWindow:
+    open_and_wait(qtbot, window, collection_dir)
+    return window
 
 
 def test_main_window_union_annotations_resolve_to_their_declared_types() -> None:
@@ -123,9 +131,7 @@ def test_view_history_does_not_wrap_at_either_end(
     index: int,
     delta: int,
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    session = window.session
-    assert session is not None
+    session = open_and_wait(qtbot, window, collection_dir)
     history = list(session.state.result_set)
     window._view_history = history
     window._view_history_index = index
@@ -138,13 +144,10 @@ def test_view_history_does_not_wrap_at_either_end(
 
 
 def test_view_history_skips_a_file_that_has_been_removed(
-    qtbot: QtBot,
-    window: MainWindow,
-    collection_dir: Path,
+    opened_window: MainWindow,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    session = window.session
+    session = opened_window.session
     assert session is not None
     first_id, removed_id = session.state.result_set
     original_get = session.media.get
@@ -153,13 +156,13 @@ def test_view_history_skips_a_file_that_has_been_removed(
         "get",
         lambda media_id: None if media_id == removed_id else original_get(media_id),
     )
-    window._view_history = [first_id, removed_id]
-    window._view_history_index = 1
+    opened_window._view_history = [first_id, removed_id]
+    opened_window._view_history_index = 1
     session.state.current_item = removed_id
 
-    window._step_history(-1)
+    opened_window._step_history(-1)
 
-    assert window._view_history_index == 0
+    assert opened_window._view_history_index == 0
     assert session.state.current_item == first_id
 
 
@@ -191,10 +194,47 @@ def test_initial_path_uses_startup_lock_handling(
     assert second.session is None
 
 
-def test_raise_request_restores_and_activates_the_window(
-    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+def test_manual_open_that_routes_to_an_existing_window_keeps_this_window_open(
+    window: MainWindow, collection_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    starting_state = Qt.WindowState.WindowMinimized | Qt.WindowState.WindowMaximized
+    def raise_locked(
+        _cls: type[object], path: Path, **_kwargs: object
+    ) -> None:
+        raise CollectionLockedError(path)
+
+    monkeypatch.setattr(
+        "prismic.ui.main_window.PrismicSession.open", classmethod(raise_locked)
+    )
+    monkeypatch.setattr("prismic.ui.main_window.request_focus", lambda _path: True)
+    closed: list[bool] = []
+    messages: list[tuple[str, int]] = []
+    monkeypatch.setattr(window, "close", lambda: closed.append(True))
+    monkeypatch.setattr(
+        window._transient_bar,
+        "show_message",
+        lambda text, timeout: messages.append((text, timeout)),
+    )
+
+    window.open_collection(collection_dir)
+
+    assert closed == []
+    assert messages == [
+        ("That collection is already open — brought its window to the front.", 5000)
+    ]
+    assert window._central_stack.currentWidget() is window._placeholder
+
+
+@pytest.mark.parametrize(
+    "starting_state",
+    [
+        Qt.WindowState.WindowMinimized | Qt.WindowState.WindowMaximized,
+        Qt.WindowState.WindowMaximized | Qt.WindowState.WindowActive,
+    ],
+    ids=["restore-minimized", "preserve-existing-active-state"],
+)
+def test_raise_request_restores_and_activates_the_window(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch, starting_state: Qt.WindowState
+) -> None:
     requested_states: list[Qt.WindowState] = []
     calls: list[str] = []
     monkeypatch.setattr(window, "windowState", lambda: starting_state)
@@ -215,6 +255,51 @@ def test_raise_request_restores_and_activates_the_window(
     assert calls == ["show", "raise", "activate", "alert"]
 
 
+@pytest.mark.parametrize(
+    ("operation", "expected_title"),
+    [
+        ("create", "Could not create tag"),
+        ("rename", "Could not rename tag"),
+        ("search-create", "Could not create tag"),
+    ],
+    ids=["create", "rename", "search-create"],
+)
+def test_unexpected_tag_command_errors_are_reported(
+    qtbot: QtBot,
+    window: MainWindow,
+    collection_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    expected_title: str,
+) -> None:
+    session = open_and_wait(qtbot, window, collection_dir)
+    original_tag = create_tag(window) if operation == "rename" else None
+
+    def fail_execute(_command: object) -> None:
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(session, "execute", fail_execute)
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "prismic.ui.main_window.MessageDialog.warning",
+        lambda _parent, title, message: warnings.append((title, message)),
+    )
+
+    if operation == "create":
+        window._on_tag_create("new tag")
+    elif operation == "rename":
+        assert original_tag is not None
+        window._on_tag_rename(original_tag.id, "renamed tag")
+    else:
+        assert window._create_tag_and_find("new tag") is None
+
+    assert warnings == [(expected_title, "database unavailable")]
+    if original_tag is None:
+        assert session.tags.list_all() == []
+    else:
+        assert [tag.name for tag in session.tags.list_all()] == [original_tag.name]
+
+
 def test_media_path_resolution_handles_missing_session_and_media(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
@@ -230,22 +315,19 @@ def test_media_path_resolution_handles_missing_session_and_media(
 
 
 def test_thumbnail_ready_repaints_only_the_matching_result_row(
-    qtbot: QtBot,
-    window: MainWindow,
-    collection_dir: Path,
+    opened_window: MainWindow,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    media_id = window.result_model.media_at(0).id
+    media_id = opened_window.result_model.media_at(0).id
     updates = []
     monkeypatch.setattr(ResultListView, "update", lambda _self, index: updates.append(index))
 
-    window._on_thumbnail_ready(media_id)
-    window._on_thumbnail_ready(-1)
+    opened_window._on_thumbnail_ready(media_id)
+    opened_window._on_thumbnail_ready(-1)
 
-    row = window.result_model.row_for_media_id(media_id)
+    row = opened_window.result_model.row_for_media_id(media_id)
     assert row is not None
-    assert updates == [window.result_model.index(row, 0)]
+    assert updates == [opened_window.result_model.index(row, 0)]
 
 
 def test_thumbnail_viewport_tracks_mouse_for_hover_painting(window: MainWindow) -> None:
@@ -265,7 +347,7 @@ def test_unchecked_tag_explains_how_to_number_its_group(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
     open_and_wait(qtbot, window, collection_dir)
-    window._on_tag_create("vacation")
+    create_tag(window)
     window._tag_shortcut_mode_action.setChecked(True)
     refresh_and_hover_item_tag(window, 0)
 

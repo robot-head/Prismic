@@ -2,9 +2,9 @@ import sqlite3
 
 import pytest
 
-from prismic.domain.media import MediaState
 from prismic.persistence.errors import DuplicateMappingError
 from prismic.persistence.repositories import mapping_repository, media_repository, tag_repository
+from tests.unit._media_support import add_active_media
 
 _Repositories = tuple[
     mapping_repository.MappingRepository,
@@ -24,23 +24,13 @@ def repositories(
     )
 
 
-def _make_media(media_repo: media_repository.MediaRepository, relative_path: str) -> int:
-    return media_repo.create(
-        relative_path=relative_path,
-        content_hash=relative_path,
-        size=1,
-        mtime=1.0,
-        state=MediaState.ACTIVE,
-    ).id
-
-
 def _mapping_setup(
     repositories: _Repositories,
     *,
     added: bool = False,
 ) -> tuple[mapping_repository.MappingRepository, int, int]:
     mappings, media_repo, tag_repo = repositories
-    media_id = _make_media(media_repo, "a.jpg")
+    media_id = add_active_media(media_repo, "a.jpg")
     tag_id = tag_repo.create("vacation").id
     if added:
         mappings.add(media_id, tag_id)
@@ -57,13 +47,22 @@ def test_add_and_tags_for_media(
     assert [t.name for t in mappings.tags_for_media(media_id)] == ["vacation"]
 
 
-def test_add_the_same_mapping_twice_raises(
-    repositories: _Repositories,
+@pytest.mark.parametrize(
+    "operation",
+    ["add_again", "remove"],
+    ids=["duplicate-add", "remove-existing"],
+)
+def test_existing_mapping_operations(
+    repositories: _Repositories, operation: str
 ) -> None:
     mappings, media_id, tag_id = _mapping_setup(repositories, added=True)
 
-    with pytest.raises(DuplicateMappingError):
-        mappings.add(media_id, tag_id)
+    if operation == "add_again":
+        with pytest.raises(DuplicateMappingError):
+            mappings.add(media_id, tag_id)
+    else:
+        mappings.remove(media_id, tag_id)
+        assert mappings.tags_for_media(media_id) == []
 
 
 def test_add_with_a_nonexistent_media_id_is_rejected_by_the_foreign_key(
@@ -80,27 +79,17 @@ def test_add_with_a_nonexistent_tag_id_is_rejected_by_the_foreign_key(
     repositories: _Repositories,
 ) -> None:
     mappings, media_repo, _tag_repo = repositories
-    media_id = _make_media(media_repo, "a.jpg")
+    media_id = add_active_media(media_repo, "a.jpg")
 
     with pytest.raises(sqlite3.IntegrityError):
         mappings.add(media_id, 999)
-
-
-def test_remove_deletes_the_mapping(
-    repositories: _Repositories,
-) -> None:
-    mappings, media_id, tag_id = _mapping_setup(repositories, added=True)
-
-    mappings.remove(media_id, tag_id)
-
-    assert mappings.tags_for_media(media_id) == []
 
 
 def test_remove_a_mapping_that_does_not_exist_is_a_no_op(
     repositories: _Repositories,
 ) -> None:
     mappings, media_repo, tag_repo = repositories
-    media_id = _make_media(media_repo, "a.jpg")
+    media_id = add_active_media(media_repo, "a.jpg")
     tag = tag_repo.create("vacation")
 
     mappings.remove(media_id, tag.id)  # never added; should not raise
@@ -120,8 +109,8 @@ def test_media_ids_for_tags_return_only_media_common_to_all_tags(
     has_common_media: bool,
 ) -> None:
     mappings, media_repo, tag_repo = repositories
-    beach = _make_media(media_repo, "beach.jpg")
-    mountain = _make_media(media_repo, "mountain.jpg")
+    beach = add_active_media(media_repo, "beach.jpg")
+    mountain = add_active_media(media_repo, "mountain.jpg")
     vacation = tag_repo.create("vacation")
     other = tag_repo.create("summer" if has_common_media else "work")
 

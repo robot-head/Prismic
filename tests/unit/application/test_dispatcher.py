@@ -1,4 +1,5 @@
 import sqlite3
+from dataclasses import dataclass
 
 import pytest
 
@@ -19,20 +20,49 @@ def _make_media(media: media_repository.MediaRepository):
     )
 
 
+def _make_media_and_tag(
+    media: media_repository.MediaRepository,
+    tags: tag_repository.TagRepository,
+) -> tuple[media_repository.Media, int]:
+    return _make_media(media), tags.create("vacation").id
+
+
 @pytest.fixture
 def state() -> ApplicationState:
     return ApplicationState()
 
 
+@dataclass(frozen=True)
+class _DispatcherContext:
+    connection: sqlite3.Connection
+    state: ApplicationState
+    tags: tag_repository.TagRepository
+    media: media_repository.MediaRepository
+    mappings: mapping_repository.MappingRepository
+
+
 @pytest.fixture
-def dispatcher(
+def _dispatcher_context(
     migrated_connection: sqlite3.Connection,
     state: ApplicationState,
     tags: tag_repository.TagRepository,
     media: media_repository.MediaRepository,
     mappings: mapping_repository.MappingRepository,
-) -> CommandDispatcher:
-    return CommandDispatcher(migrated_connection, state, tags, media, mappings, History())
+) -> _DispatcherContext:
+    return _DispatcherContext(migrated_connection, state, tags, media, mappings)
+
+
+@pytest.fixture
+def dispatcher(_dispatcher_context: _DispatcherContext) -> CommandDispatcher:
+    context = _dispatcher_context
+    return CommandDispatcher(
+        context.connection,
+        context.state,
+        context.tags,
+        context.media,
+        context.mappings,
+        History(),
+    )
 
 
 def test_execute_always_leaves_current_item_null_or_in_the_result_set(
@@ -41,14 +71,13 @@ def test_execute_always_leaves_current_item_null_or_in_the_result_set(
     media: media_repository.MediaRepository,
     tags: tag_repository.TagRepository,
 ) -> None:
-    photo = _make_media(media)
-    tag = tags.create("vacation")
+    photo, tag_id = _make_media_and_tag(media, tags)
 
-    dispatcher.execute(FilterSelectCommand(tag_id=tag.id))
+    dispatcher.execute(FilterSelectCommand(tag_id=tag_id))
     assert state.current_item is None or state.current_item in state.result_set
     assert state.result_set == []  # nothing mapped to the tag yet
 
-    dispatcher.execute(MappingAddCommand(media_id=photo.id, tag_id=tag.id))
+    dispatcher.execute(MappingAddCommand(media_id=photo.id, tag_id=tag_id))
     assert state.current_item is None or state.current_item in state.result_set
     assert state.result_set == [photo.id]
 
@@ -112,20 +141,20 @@ def test_a_fresh_command_clears_the_redo_stack(
 
 def test_a_failed_command_publishes_no_partial_mutation(
     dispatcher: CommandDispatcher,
-    state: ApplicationState,
-    tags: tag_repository.TagRepository,
-    media: media_repository.MediaRepository,
+    _dispatcher_context: _DispatcherContext,
 ) -> None:
-    tag = tags.create("vacation")
-    state_before = (list(state.result_set), state.current_item)
+    context = _dispatcher_context
+    photo, tag_id = _make_media_and_tag(context.media, context.tags)
+    state_before = (list(context.state.result_set), context.state.current_item)
 
     with pytest.raises(UnknownMediaError):
-        dispatcher.execute(MappingAddCommand(media_id=999, tag_id=tag.id))
+        dispatcher.execute(MappingAddCommand(media_id=999, tag_id=tag_id))
 
     # No mapping was written, state wasn't republished, and nothing landed
     # on the undo stack for a command that never actually applied.
-    assert tags.list_all() == [tag]
-    assert (list(state.result_set), state.current_item) == state_before
+    assert [tag.name for tag in context.tags.list_all()] == ["vacation"]
+    assert context.mappings.tags_for_media(photo.id) == []
+    assert (list(context.state.result_set), context.state.current_item) == state_before
     assert dispatcher.undo() is False
 
 

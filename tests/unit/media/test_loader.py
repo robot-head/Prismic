@@ -5,7 +5,7 @@ from PySide6.QtGui import QImage
 from pytestqt.qtbot import QtBot
 
 import prismic.media.loader as loader_module
-from prismic.media.loader import ImageLoader
+from prismic.media.loader import ImageLoader, ImageLoadResult
 
 
 def _fresh_request() -> tuple[ImageLoader, int]:
@@ -13,12 +13,25 @@ def _fresh_request() -> tuple[ImageLoader, int]:
     return loader, loader.begin_request()
 
 
+def _stale_request() -> tuple[ImageLoader, int]:
+    loader = ImageLoader()
+    request_id = loader.begin_request()
+    loader.begin_request()
+    return loader, request_id
+
+
+def _load_fixture(
+    fixtures_dir: Path, filename: str
+) -> tuple[ImageLoader, int, ImageLoadResult | None]:
+    loader, request_id = _fresh_request()
+    result = loader.load(request_id, fixtures_dir / filename)
+    return loader, request_id, result
+
+
 def test_load_returns_the_decoded_image_for_a_fresh_request(
     qtbot: QtBot, fixtures_dir: Path
 ) -> None:
-    loader, request_id = _fresh_request()
-
-    result = loader.load(request_id, fixtures_dir / "supported_image.png")
+    _loader, request_id, result = _load_fixture(fixtures_dir, "supported_image.png")
 
     assert result is not None
     assert result.request_id == request_id
@@ -30,9 +43,7 @@ def test_load_returns_the_decoded_image_for_a_fresh_request(
 def test_load_on_corrupt_content_returns_an_error_result_not_none(
     qtbot: QtBot, fixtures_dir: Path
 ) -> None:
-    loader, request_id = _fresh_request()
-
-    result = loader.load(request_id, fixtures_dir / "corrupt_image.jpg")
+    _loader, _request_id, result = _load_fixture(fixtures_dir, "corrupt_image.jpg")
 
     assert result is not None
     assert result.image is None
@@ -40,11 +51,9 @@ def test_load_on_corrupt_content_returns_an_error_result_not_none(
 
 
 def test_load_with_an_already_stale_request_id_returns_none(
-    qtbot: QtBot, fixtures_dir: Path
+    fixtures_dir: Path,
 ) -> None:
-    loader = ImageLoader()
-    stale_request_id = loader.begin_request()
-    loader.begin_request()  # a newer request supersedes it
+    loader, stale_request_id = _stale_request()
 
     result = loader.load(stale_request_id, fixtures_dir / "supported_image.png")
 
@@ -109,10 +118,8 @@ def test_preload_warms_the_cache_so_a_later_load_never_redecodes(
     assert call_count == 0  # served entirely from the preload-warmed cache
 
 
-def test_preload_with_a_stale_request_id_does_nothing(qtbot: QtBot, fixtures_dir: Path) -> None:
-    loader = ImageLoader()
-    stale_request_id = loader.begin_request()
-    loader.begin_request()
+def test_preload_with_a_stale_request_id_does_nothing(fixtures_dir: Path) -> None:
+    loader, stale_request_id = _stale_request()
 
     loader.preload(stale_request_id, fixtures_dir / "supported_image.png")
 

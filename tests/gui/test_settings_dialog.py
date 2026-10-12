@@ -22,11 +22,14 @@ from prismic.ui.settings_dialog import (
     ThresholdRow,
     binding_display,
 )
+from tests.gui.helpers import shown_parent
 
 
 @pytest.fixture
-def bindings(tmp_path: Path) -> ShortcutBindings:
-    return ShortcutBindings(PreferencesStore(tmp_path / "preferences.json"))
+def bindings() -> ShortcutBindings:
+    # The autouse isolated_preferences fixture redirects the default store
+    # to this test's temporary config directory.
+    return ShortcutBindings()
 
 
 @pytest.fixture
@@ -84,6 +87,37 @@ def accept_all(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         MessageDialog, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes
     )
+
+
+@pytest.fixture
+def accepted_dialog_questions(monkeypatch: pytest.MonkeyPatch) -> None:
+    accept_all(monkeypatch)
+
+
+def _capture_key_with_confirmation(
+    qtbot: QtBot,
+    dialog: SettingsDialog,
+    monkeypatch: pytest.MonkeyPatch,
+    key: Qt.Key,
+) -> KeyCaptureButton:
+    accept_all(monkeypatch)
+    return capture_key(qtbot, dialog, key, Qt.KeyboardModifier.NoModifier)
+
+
+def _hold_control_during_capture(qtbot: QtBot, dialog: SettingsDialog) -> KeyCaptureButton:
+    button = start_capture(qtbot, dialog)
+    qtbot.keyPress(button, Qt.Key.Key_Control)
+    return button
+
+
+def _assert_ignored_release(
+    button: KeyCaptureButton,
+    event: QKeyEvent,
+    bindings: ShortcutBindings,
+) -> None:
+    assert button.event(event)
+    assert button.is_capturing
+    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
 
 
 # -- The panel lists everything ----------------------------------------------
@@ -177,10 +211,7 @@ def test_clearing_the_search_box_brings_every_row_back(dialog: SettingsDialog) -
 
 
 def test_clicking_the_key_box_starts_capturing(qtbot: QtBot, dialog: SettingsDialog) -> None:
-    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
-    assert isinstance(button, KeyCaptureButton)
-
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    button = start_capture(qtbot, dialog)
 
     assert button.is_capturing
     assert button.text() == "Press a key…"
@@ -212,9 +243,7 @@ def test_capturing_records_the_modifiers_too(
 def test_a_bare_modifier_does_not_end_the_capture(qtbot: QtBot, dialog: SettingsDialog) -> None:
     """Ctrl on its own is the user starting a combination, not finishing
     one -- the box keeps waiting for the rest."""
-    button = start_capture(qtbot, dialog)
-
-    qtbot.keyPress(button, Qt.Key.Key_Control)
+    button = _hold_control_during_capture(qtbot, dialog)
 
     assert button.is_capturing
 
@@ -233,7 +262,7 @@ def test_closing_the_window_mid_capture_releases_the_keyboard(
     dialog.close()
 
     assert not button.is_capturing
-    assert QWidget.keyboardGrabber() is not button
+    assert QWidget.keyboardGrabber() is None
 
 
 def test_escape_cancels_a_capture_without_changing_anything(
@@ -246,39 +275,23 @@ def test_escape_cancels_a_capture_without_changing_anything(
     assert dialog.isVisible()  # and it didn't close the dialog either
 
 
-def test_capturing_tab_binds_tab_rather_than_moving_focus(
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [(Qt.Key.Key_Tab, "Tab"), (Qt.Key.Key_Space, "Space")],
+    ids=["tab-does-not-move-focus", "space-does-not-activate-button"],
+)
+def test_navigation_keys_can_be_captured_as_shortcuts(
     qtbot: QtBot,
     dialog: SettingsDialog,
     bindings: ShortcutBindings,
     monkeypatch: pytest.MonkeyPatch,
+    key: Qt.Key,
+    expected: str,
 ) -> None:
-    """Every key Qt normally spends on its own navigation has to be
-    bindable -- Tab most of all, since it's a real default here. (It's
-    already taken by the tag-search cycle, hence the conflict prompt.)"""
-    accept_all(monkeypatch)
-    button = start_capture(qtbot, dialog)
+    """Tab and Space keep their normal navigation behavior outside capture."""
+    _capture_key_with_confirmation(qtbot, dialog, monkeypatch, key)
 
-    qtbot.keyClick(button, Qt.Key.Key_Tab)
-
-    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Tab"
-
-
-def test_capturing_space_binds_space_rather_than_re_pressing_the_button(
-    qtbot: QtBot,
-    dialog: SettingsDialog,
-    bindings: ShortcutBindings,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Space would otherwise activate the focused capture button itself,
-    ending the capture instead of being recorded by it."""
-    accept_all(monkeypatch)
-    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
-    assert isinstance(button, KeyCaptureButton)
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
-
-    qtbot.keyClick(button, Qt.Key.Key_Space)
-
-    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Space"
+    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == expected
 
 
 def test_tapping_a_modifier_alone_binds_the_modifier(
@@ -320,9 +333,7 @@ def test_two_modifiers_held_together_are_not_a_tap(
 ) -> None:
     """Ctrl held while Shift goes down isn't either one tapped alone, so
     the box keeps waiting rather than guessing which was meant."""
-    button = start_capture(qtbot, dialog)
-
-    qtbot.keyPress(button, Qt.Key.Key_Control)
+    button = _hold_control_during_capture(qtbot, dialog)
     qtbot.keyPress(button, Qt.Key.Key_Shift)
     qtbot.keyRelease(button, Qt.Key.Key_Shift)
     qtbot.keyRelease(button, Qt.Key.Key_Control)
@@ -360,35 +371,33 @@ def test_clear_enables_reset_and_reset_restores_the_default(
         assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
 
 
-def test_restore_all_defaults_resets_every_shortcut(
+@pytest.mark.parametrize(
+    ("answer", "restored"),
+    [
+        (QMessageBox.StandardButton.Yes, True),
+        (QMessageBox.StandardButton.Cancel, False),
+    ],
+    ids=["confirmed", "declined"],
+)
+def test_restore_all_defaults_respects_confirmation(
     qtbot: QtBot,
     dialog: SettingsDialog,
     bindings: ShortcutBindings,
     monkeypatch: pytest.MonkeyPatch,
+    answer: QMessageBox.StandardButton,
+    restored: bool,
 ) -> None:
-    accept_all(monkeypatch)
     bindings.set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "F5")
     bindings.set_binding(shortcuts.NAVIGATE_NEXT, "F6")
+    monkeypatch.setattr(MessageDialog, "question", lambda *args, **kwargs: answer)
 
     qtbot.mouseClick(dialog.shortcuts_panel._restore_button, Qt.MouseButton.LeftButton)
 
-    assert all(bindings.is_default(definition.id) for definition in SHORTCUTS)
-
-
-def test_declining_restore_all_defaults_keeps_existing_bindings(
-    qtbot: QtBot,
-    dialog: SettingsDialog,
-    bindings: ShortcutBindings,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    bindings.set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "F5")
-    monkeypatch.setattr(
-        MessageDialog, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Cancel
-    )
-
-    qtbot.mouseClick(dialog.shortcuts_panel._restore_button, Qt.MouseButton.LeftButton)
-
-    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "F5"
+    if restored:
+        assert all(bindings.is_default(definition.id) for definition in SHORTCUTS)
+    else:
+        assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "F5"
+        assert bindings.binding(shortcuts.NAVIGATE_NEXT) == "F6"
 
 
 # -- Conflicts ---------------------------------------------------------------------
@@ -398,9 +407,8 @@ def test_taking_a_key_from_another_shortcut_asks_first_and_clears_it(
     qtbot: QtBot,
     dialog: SettingsDialog,
     bindings: ShortcutBindings,
-    monkeypatch: pytest.MonkeyPatch,
+    accepted_dialog_questions: None,
 ) -> None:
-    accept_all(monkeypatch)
     capture_key(qtbot, dialog, Qt.Key.Key_T, Qt.KeyboardModifier.ControlModifier)
 
     assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+T"
@@ -567,9 +575,7 @@ def test_unrelated_modifier_release_does_not_bind_the_pending_modifier(
     button._pending_modifier = int(Qt.Key.Key_Control)
     release = _key_release(unrelated_key, ignored=True)
 
-    assert button.event(release)
-    assert button.is_capturing
-    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
+    _assert_ignored_release(button, release, bindings)
 
 
 def test_release_without_a_pending_modifier_is_consumed_without_binding(
@@ -578,9 +584,7 @@ def test_release_without_a_pending_modifier_is_consumed_without_binding(
     button = start_capture(qtbot, dialog)
     release = _key_release(Qt.Key.Key_F5, ignored=True)
 
-    assert button.event(release)
-    assert button.is_capturing
-    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
+    _assert_ignored_release(button, release, bindings)
 
 
 def test_auto_repeat_modifier_release_does_not_finish_capture(
@@ -590,9 +594,7 @@ def test_auto_repeat_modifier_release_does_not_finish_capture(
     button._pending_modifier = int(Qt.Key.Key_Control)
     event = _key_release(Qt.Key.Key_Control, auto_repeat=True)
 
-    assert button.event(event)
-    assert button.is_capturing
-    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
+    _assert_ignored_release(button, event, bindings)
 
 
 def test_threshold_row_limits_percent_input_and_resets_changed_values(
@@ -816,11 +818,7 @@ def test_a_parented_dialog_positions_itself_before_it_is_shown(
     what stops the second pass; this asserts the flag rather than the
     coordinates, since the exact centre is the window manager's business
     and varies by screen."""
-    parent = QWidget()
-    qtbot.addWidget(parent)
-    parent.resize(1200, 800)
-    parent.show()
-    qtbot.waitExposed(parent)
+    parent = shown_parent(qtbot, 1200, 800)
 
     child = SettingsDialog(bindings, parent)
     qtbot.addWidget(child)
