@@ -1,4 +1,4 @@
-"""Shared test doubles for Qt mutation-survivor coverage."""
+"""Shared helpers for Qt widget and event tests."""
 
 from __future__ import annotations
 

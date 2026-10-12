@@ -80,3 +80,11 @@ def test_downsample_scales_when_only_one_dimension_exceeds_the_bound(qtbot: QtBo
 
     assert result.width() == 200
     assert result.height() < 100
+
+
+def test_downsample_preserves_an_image_that_fits_at_the_exact_boundary(qtbot) -> None:
+    image = QImage(500, 250, QImage.Format.Format_RGB32)
+
+    result = downsample(image, max_dimension=500)
+
+    assert result is image

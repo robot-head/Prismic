@@ -1,11 +1,16 @@
+from __future__ import annotations
+
 from pathlib import Path
 
+import PySide6.QtCore as qtcore
+import PySide6.QtWidgets as qtwidgets
 import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QIntValidator, QKeyEvent
 from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton, QScrollArea, QWidget
 from pytestqt.qtbot import QtBot
 
+import prismic.ui.settings_dialog as settings_dialog
 from prismic.application.input import shortcuts
 from prismic.application.input.shortcuts import SHORTCUTS, ShortcutBindings
 from prismic.application.tag_ranking_settings import (
@@ -836,3 +841,156 @@ def test_a_parentless_dialog_is_left_to_the_platform(dialog: SettingsDialog) -> 
     """The `dialog` fixture builds one with no parent -- there's nothing
     to centre on, so placing it stays the window manager's job."""
     assert not dialog.testAttribute(Qt.WidgetAttribute.WA_Moved)
+
+
+def test_starting_shortcut_capture_grabs_and_then_releases_the_keyboard(qtbot: QtBot) -> None:
+    button = settings_dialog.KeyCaptureButton()
+    qtbot.addWidget(button)
+    button.show()
+
+    qtbot.mouseClick(button, qtcore.Qt.MouseButton.LeftButton)
+
+    assert button.is_capturing
+    assert qtwidgets.QWidget.keyboardGrabber() is button
+
+    qtbot.keyClick(button, qtcore.Qt.Key.Key_F7)
+
+    assert not button.is_capturing
+    assert qtwidgets.QWidget.keyboardGrabber() is not button
+
+
+def _shortcuts_panel(
+    qtbot: QtBot, tmp_path
+) -> tuple[
+    settings_dialog.ShortcutsPanel,
+    shortcuts.ShortcutBindings,
+]:
+    bindings = shortcuts.ShortcutBindings(PreferencesStore(tmp_path / "preferences.json"))
+    panel = settings_dialog.ShortcutsPanel(bindings)
+    qtbot.addWidget(panel)
+    return (panel, bindings)
+
+
+def test_search_with_no_matches_hides_categories_and_shows_the_empty_state(
+    qtbot: QtBot, tmp_path
+) -> None:
+    panel, _bindings = _shortcuts_panel(qtbot, tmp_path)
+    panel.search_box.setText("no shortcut has this phrase")
+    assert panel.visible_rows() == []
+    assert panel._empty_label.isVisibleTo(panel)
+    assert all(not header.isVisibleTo(panel) for header in panel._headers.values())
+
+
+def test_assigning_the_existing_binding_does_not_report_a_change(qtbot: QtBot, tmp_path) -> None:
+    panel, bindings = _shortcuts_panel(qtbot, tmp_path)
+    row = next(row for row in panel.rows if row.definition.id == shortcuts.OPEN_COLLECTION_FOLDER)
+    current = bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER)
+    same_value = (" " + current)[1:]
+    assert same_value == current and same_value is not current
+    changed: list[None] = []
+    row.changed.connect(lambda: changed.append(None))
+    row._assign(same_value)
+    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == current
+    assert changed == []
+
+
+def test_clearing_a_threshold_field_restores_its_current_value(qtbot: QtBot) -> None:
+    row = settings_dialog.ThresholdRow("Threshold", "Description", default_fraction=0.5)
+    qtbot.addWidget(row)
+    row.set_fraction(0.63)
+    changed: list[None] = []
+    row.changed.connect(lambda: changed.append(None))
+    row._editor.clear()  # noqa: SLF001
+
+    row._commit()  # noqa: SLF001
+
+    assert row.fraction == 0.63
+    assert row._editor.text() == "63"  # noqa: SLF001
+    assert changed == []
+
+
+def _key_event(
+    key: Qt.Key, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier
+) -> QKeyEvent:
+    return QKeyEvent(QEvent.Type.KeyPress, key, modifiers)
+
+
+def test_key_capture_button_does_not_capture_when_not_armed(qtbot: QtBot) -> None:
+    button = KeyCaptureButton()
+    qtbot.addWidget(button)
+    button.set_binding("Ctrl+O")
+    captured: list[str] = []
+    button.binding_captured.connect(captured.append)
+
+    button.event(_key_event(Qt.Key.Key_F5))
+
+    assert captured == []
+    assert button.is_capturing is False
+    assert button.text() == "Ctrl + O"
+
+
+def test_key_capture_consumes_the_binding_key(qtbot: QtBot) -> None:
+    button = KeyCaptureButton()
+    qtbot.addWidget(button)
+    button.setChecked(True)
+    captured: list[str] = []
+    button.binding_captured.connect(captured.append)
+    event = _key_event(Qt.Key.Key_F5)
+
+    assert button.event(event) is True
+    assert captured == ["F5"]
+    assert button.is_capturing is False
+
+
+def test_settings_widget_constructors_accept_their_keyword_parameters(qtbot: QtBot) -> None:
+    parent = QWidget()
+    qtbot.addWidget(parent)
+
+    button = KeyCaptureButton(parent=parent, held=True)
+    row = ThresholdRow(
+        label="Threshold", description="Description", default_fraction=0.5, parent=parent
+    )
+    dialog = SettingsDialog(ShortcutBindings(), parent=parent)
+
+    assert button.parentWidget() is parent
+    assert row.parentWidget() is parent
+    assert dialog.parentWidget() is parent
+
+
+def _dismiss_question(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        MessageDialog,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.NoButton,
+    )
+
+
+def test_conflict_confirmation_does_not_accept_a_dismissed_dialog(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bindings = ShortcutBindings()
+    dialog = SettingsDialog(bindings)
+    qtbot.addWidget(dialog)
+    row = next(
+        row
+        for row in dialog.shortcuts_panel.rows
+        if row.definition.id == shortcuts.OPEN_COLLECTION_FOLDER
+    )
+    _dismiss_question(monkeypatch)
+
+    assert row._confirm_conflicts("Ctrl+T") is False
+    assert bindings.binding(shortcuts.TOGGLE_THUMBNAILS) == "Ctrl+T"
+
+
+def test_restore_defaults_does_not_accept_a_dismissed_dialog(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bindings = ShortcutBindings()
+    bindings.set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "F5")
+    dialog = SettingsDialog(bindings)
+    qtbot.addWidget(dialog)
+    _dismiss_question(monkeypatch)
+
+    dialog.shortcuts_panel._restore_defaults()
+
+    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "F5"

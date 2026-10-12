@@ -1,5 +1,7 @@
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QMargins, QPointF, Qt
+from PySide6.QtGui import QMouseEvent
+from PySide6.QtWidgets import QWidget
 from pytestqt.qtbot import QtBot
 
 from prismic.domain.tag import Tag
@@ -102,3 +104,50 @@ def test_focus_search_gives_the_search_box_focus(qtbot: QtBot) -> None:
     qtbot.waitUntil(lambda: panel.search_box.hasFocus(), timeout=1000)
 
     assert panel.search_box.hasFocus()
+
+
+def test_tag_panel_reports_hovered_row_from_viewport_event(qtbot: QtBot) -> None:
+    panel = TagPanel("Item tags")
+    qtbot.addWidget(panel)
+    panel.resize(260, 180)
+    panel.set_tags([Tag(id=11, name="vacation")], frozenset())
+    assert panel._delegate._show_shortcuts is False
+    panel.show()
+    qtbot.waitExposed(panel)
+    row_rect = panel.list_view.visualRect(panel.model.index(0, 0))
+    assert row_rect.isValid()
+    rows: list[int | None] = []
+    panel.hover_row_changed.connect(rows.append)
+    position = QPointF(row_rect.center())
+    event = QMouseEvent(
+        QEvent.Type.MouseMove,
+        position,
+        position,
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    panel.eventFilter(panel.list_view.viewport(), event)
+
+    assert rows == [0]
+
+
+def test_tag_panel_keeps_header_spacing_and_stretches_the_tag_list(qtbot: QtBot) -> None:
+    panel = TagPanel("Item tags")
+    qtbot.addWidget(panel)
+
+    assert panel.header.layout().contentsMargins() == QMargins(0, 0, 0, 0)
+    assert panel.header.layout().spacing() == 0
+    assert panel.layout().contentsMargins() == QMargins(0, 0, 0, 0)
+    assert panel.layout().spacing() == 0
+    assert panel.layout().stretch(1) == 1
+
+
+def test_tag_panel_tracks_viewport_mouse_and_keeps_parent_keyword_usable(qtbot: QtBot) -> None:
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    panel = TagPanel("Item tags", parent=parent, show_shortcuts=True)
+
+    assert panel.parentWidget() is parent
+    assert panel.list_view.viewport().hasMouseTracking()

@@ -1,5 +1,3 @@
-"""Behavioral coverage for thumbnail painting and video badges."""
-
 from pathlib import Path
 
 import pytest
@@ -13,6 +11,33 @@ from prismic.ui.result_model import MediaIdRole
 from prismic.ui.thumbnail_delegate import ThumbnailDelegate
 from prismic.ui.thumbnail_services import ThumbnailServices
 from tests.gui._thumbnail_helpers import render_play_badge
+
+
+def test_play_triangle_keeps_its_expected_bounds(qtbot: QtBot) -> None:
+    image, _background = render_play_badge()
+
+    primary = QColor(theme.TEXT_PRIMARY)
+    # The triangle has a narrow left edge, a 13.5px half-height, and a tip
+    # just to the right of x=57. The surrounding pixels are inside the badge
+    # circle but outside the glyph, so size and vertex changes remain visible.
+    assert image.pixelColor(45, 50) == primary
+    assert image.pixelColor(44, 50) != primary
+    assert image.pixelColor(50, 44) != primary
+    assert image.pixelColor(50, 55) != primary
+    assert image.pixelColor(57, 50) != primary
+    assert image.pixelColor(60, 50) != primary
+
+
+def test_play_badge_draws_a_centered_circle_and_right_facing_triangle(qtbot: QtBot) -> None:
+    image, background = render_play_badge()
+
+    # The circle radius is 15 (one quarter of the 60px short side), centered
+    # at (50, 50); the play glyph is white and points to the right.
+    assert image.pixelColor(50, 50) == QColor(theme.TEXT_PRIMARY)
+    assert image.pixelColor(54, 50) == QColor(theme.TEXT_PRIMARY)
+    assert image.pixelColor(43, 50) != QColor(theme.TEXT_PRIMARY)
+    assert image.pixelColor(50, 40).red() < background.red()
+    assert image.pixelColor(50, 32) == background
 
 
 class _Provider:
@@ -60,58 +85,6 @@ def _model_and_index(name: str = "photo.jpg") -> tuple[QStandardItemModel, QMode
     return model, model.index(0, 0)
 
 
-def _render(delegate: ThumbnailDelegate, *, name: str = "photo.jpg", state=None) -> QImage:
-    image = QImage(340, 110, QImage.Format.Format_ARGB32_Premultiplied)
-    image.fill(QColor("#000000"))
-    painter = QPainter(image)
-    _model, index = _model_and_index(name)
-    delegate.paint(painter, _option(state=state or QStyle.StateFlag.State_None), index)
-    painter.end()
-    return image
-
-
-def _light_ink_x_positions(image: QImage) -> list[int]:
-    return [
-        x
-        for y in range(image.height())
-        for x in range(image.width())
-        if image.pixelColor(x, y).red() > 180
-        and image.pixelColor(x, y).green() > 180
-        and image.pixelColor(x, y).blue() > 180
-    ]
-
-
-def _striped_pixmap(*, horizontal: bool) -> QPixmap:
-    pixmap = QPixmap(48, 96) if horizontal else QPixmap(96, 48)
-    pixmap.fill(QColor("#e02020"))
-    painter = QPainter(pixmap)
-    painter.fillRect(
-        QRect(0, 48, 48, 48) if horizontal else QRect(48, 0, 48, 48),
-        QColor("#2040e0"),
-    )
-    painter.end()
-    return pixmap
-
-
-def _render_cached_striped_thumbnail(*, horizontal: bool) -> QImage:
-    provider = _Provider({17: _striped_pixmap(horizontal=horizontal)})
-    delegate = _delegate(provider)
-    delegate.show_thumbnails = True
-    return _render(delegate)
-
-
-def test_play_badge_draws_a_centered_circle_and_right_facing_triangle(qtbot: QtBot) -> None:
-    image, background = render_play_badge()
-
-    # The circle radius is 15 (one quarter of the 60px short side), centered
-    # at (50, 50); the play glyph is white and points to the right.
-    assert image.pixelColor(50, 50) == QColor(theme.TEXT_PRIMARY)
-    assert image.pixelColor(54, 50) == QColor(theme.TEXT_PRIMARY)
-    assert image.pixelColor(43, 50) != QColor(theme.TEXT_PRIMARY)
-    assert image.pixelColor(50, 40).red() < background.red()
-    assert image.pixelColor(50, 32) == background
-
-
 def test_delegate_size_hint_tracks_thumbnail_mode() -> None:
     delegate = _delegate(_Provider())
     option = _option(QRect(0, 0, 240, 100))
@@ -120,6 +93,16 @@ def test_delegate_size_hint_tracks_thumbnail_mode() -> None:
     assert delegate.sizeHint(option, index) == QSize(240, 32)
     delegate.show_thumbnails = True
     assert delegate.sizeHint(option, index) == QSize(240, 64)
+
+
+def _render(delegate: ThumbnailDelegate, *, name: str = "photo.jpg", state=None) -> QImage:
+    image = QImage(340, 110, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(QColor("#000000"))
+    painter = QPainter(image)
+    _model, index = _model_and_index(name)
+    delegate.paint(painter, _option(state=state or QStyle.StateFlag.State_None), index)
+    painter.end()
+    return image
 
 
 def test_selection_and_hover_use_distinct_row_washes(qtbot: QtBot) -> None:
@@ -176,18 +159,54 @@ def test_video_thumbnail_gets_a_badge_without_an_extra_request(qtbot: QtBot, cac
     assert provider.requests == []
 
 
-def test_cached_wide_thumbnail_is_cropped_equally_from_both_sides(qtbot: QtBot) -> None:
-    image = _render_cached_striped_thumbnail(horizontal=False)
+def _striped_pixmap(*, horizontal: bool) -> QPixmap:
+    pixmap = QPixmap(48, 96) if horizontal else QPixmap(96, 48)
+    pixmap.fill(QColor("#e02020"))
+    painter = QPainter(pixmap)
+    painter.fillRect(
+        QRect(0, 48, 48, 48) if horizontal else QRect(48, 0, 48, 48),
+        QColor("#2040e0"),
+    )
+    painter.end()
+    return pixmap
 
-    assert image.pixelColor(30, 52) == QColor("#e02020")
-    assert image.pixelColor(54, 52) == QColor("#2040e0")
+
+def _render_cached_striped_thumbnail(*, horizontal: bool) -> QImage:
+    provider = _Provider({17: _striped_pixmap(horizontal=horizontal)})
+    delegate = _delegate(provider)
+    delegate.show_thumbnails = True
+    return _render(delegate)
 
 
-def test_cached_tall_thumbnail_is_cropped_equally_from_top_and_bottom(qtbot: QtBot) -> None:
-    image = _render_cached_striped_thumbnail(horizontal=True)
+@pytest.mark.parametrize(
+    ("horizontal", "first_sample", "second_sample"),
+    [
+        (False, (30, 52), (54, 52)),
+        (True, (42, 40), (42, 64)),
+    ],
+    ids=["wide", "tall"],
+)
+def test_cached_thumbnail_is_cropped_equally(
+    qtbot: QtBot,
+    horizontal: bool,
+    first_sample: tuple[int, int],
+    second_sample: tuple[int, int],
+) -> None:
+    image = _render_cached_striped_thumbnail(horizontal=horizontal)
 
-    assert image.pixelColor(42, 40) == QColor("#e02020")
-    assert image.pixelColor(42, 64) == QColor("#2040e0")
+    assert image.pixelColor(*first_sample) == QColor("#e02020")
+    assert image.pixelColor(*second_sample) == QColor("#2040e0")
+
+
+def _light_ink_x_positions(image: QImage) -> list[int]:
+    return [
+        x
+        for y in range(image.height())
+        for x in range(image.width())
+        if image.pixelColor(x, y).red() > 180
+        and image.pixelColor(x, y).green() > 180
+        and image.pixelColor(x, y).blue() > 180
+    ]
 
 
 def test_filename_starts_after_thumbnail_and_uses_the_remaining_row_width(qtbot: QtBot) -> None:

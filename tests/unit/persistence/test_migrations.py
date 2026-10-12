@@ -1,12 +1,16 @@
+from __future__ import annotations
+
 import collections.abc
 import pathlib
 import sqlite3
+from pathlib import Path
 
 import pytest
 
 import prismic.persistence.database as database
 import prismic.persistence.migrations as migrations
-from prismic.persistence.errors import SchemaTooNewError
+from prismic.persistence.database import connect
+from prismic.persistence.errors import SchemaMigrationError, SchemaTooNewError
 from tests.unit._migration_helpers import assert_migration_failure_preserves_version
 
 
@@ -80,3 +84,57 @@ def test_a_failed_migration_step_rolls_back_and_leaves_prior_schema_intact(
     assert "half_created" not in tables
     # The schema from before the failed step is still fully usable.
     connection.execute("INSERT INTO tags (name) VALUES ('still works')")
+
+
+def test_migration_failure_names_the_version_that_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database_path = tmp_path / "collection.prismic"
+    connection = connect(database_path)
+    try:
+        migrations.migrate(connection, database_path)
+        failed_version = len(migrations.MIGRATIONS) + 1
+
+        def broken_migration(conn: sqlite3.Connection) -> None:
+            raise RuntimeError("forced migration failure")
+
+        monkeypatch.setattr(
+            migrations,
+            "MIGRATIONS",
+            [
+                *migrations.MIGRATIONS,
+                broken_migration,
+            ],
+        )
+        with pytest.raises(SchemaMigrationError) as error:
+            migrations.migrate(connection, database_path)
+        assert f"Migration to schema version {failed_version} failed" in str(error.value)
+    finally:
+        connection.close()
+
+
+def test_migration_failure_after_version_two_preserves_that_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database_path = tmp_path / "collection.prismic"
+    connection = database.connect(database_path)
+    try:
+        existing_migrations = migrations.MIGRATIONS
+
+        def fail_after_version_two(conn: sqlite3.Connection) -> None:
+            raise RuntimeError("stop before the next migration")
+
+        monkeypatch.setattr(
+            migrations,
+            "MIGRATIONS",
+            [existing_migrations[0], existing_migrations[1], fail_after_version_two],
+        )
+        assert_migration_failure_preserves_version(connection, database_path, expected_version=2)
+        assert (
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scan_stats'"
+            ).fetchone()
+            is not None
+        )
+    finally:
+        connection.close()

@@ -4,6 +4,8 @@ display that replaces the single-item viewer while more than one file is
 selected.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import pytest
@@ -12,7 +14,7 @@ from pytestqt.qtbot import QtBot
 
 from prismic.domain.tag import Tag
 from prismic.ui.main_window import MainWindow
-from tests.gui.helpers import checked_tag_names, open_and_wait
+from tests.gui.helpers import checked_tag_names, open_and_wait, open_three_item_collection
 
 
 def _select_both(window: MainWindow) -> tuple[int, int]:
@@ -69,9 +71,7 @@ def _open_and_select_two_through_list(
 
 
 @pytest.fixture
-def two_selected_window(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
-) -> MainWindow:
+def two_selected_window(qtbot: QtBot, window: MainWindow, collection_dir: Path) -> MainWindow:
     _open_and_select_two_through_list(qtbot, window, collection_dir)
     return window
 
@@ -209,3 +209,20 @@ def test_undoing_a_multi_select_add_is_one_step_and_only_reverts_what_changed(
 
     assert [t.id for t in window.session.mappings.tags_for_media(a_id)] == [beach.id]  # type: ignore[union-attr]
     assert window.session.mappings.tags_for_media(b_id) == []  # type: ignore[union-attr]
+
+
+def test_multi_selection_grid_keeps_display_order_and_skips_unselected_items(
+    qtbot: QtBot, window: MainWindow, collection_dir
+) -> None:
+    session = open_three_item_collection(qtbot, window, collection_dir)
+    first, _middle, last = session.state.result_set
+    session.state.current_item = first
+    session.state.selected_items = frozenset({first, last})
+
+    window._refresh_all()  # noqa: SLF001
+
+    expected = [
+        (media_id, session.collection.root / session.media.get(media_id).relative_path)
+        for media_id in (first, last)
+    ]
+    assert window.selection_grid._items == expected  # noqa: SLF001

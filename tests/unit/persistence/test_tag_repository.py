@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import sqlite3
 
 import pytest
 
+from prismic.domain.media import MediaState
 from prismic.domain.tag import InvalidTagNameError
 from prismic.persistence.errors import DuplicateTagNameError, UnknownTagError
+from prismic.persistence.repositories import mapping_repository, media_repository, tag_repository
 from prismic.persistence.repositories.tag_repository import TagRepository
 
 
@@ -146,3 +150,36 @@ def test_mega_popular_tag_ids_is_empty_with_no_media(repository: TagRepository) 
     repository.create("mega")
 
     assert repository.mega_popular_tag_ids(0.1, total_media_count=0) == frozenset()
+
+
+def test_mega_popular_tags_are_empty_when_media_count_is_negative(
+    migrated_connection: sqlite3.Connection,
+) -> None:
+    tags = TagRepository(migrated_connection)
+    created = tags.create("travel")
+
+    assert tags.mega_popular_tag_ids(0.1, total_media_count=-1) == frozenset()
+    assert tags.get(created.id) == created
+
+
+def test_mega_popular_tag_threshold_includes_a_tag_on_the_only_media(
+    migrated_connection: sqlite3.Connection,
+) -> None:
+    media = media_repository.MediaRepository(migrated_connection).create(
+        "photo.jpg", "hash", 1, 1.5, MediaState.ACTIVE
+    )
+    tags = tag_repository.TagRepository(migrated_connection)
+    tag = tags.create("vacation")
+    mapping_repository.MappingRepository(migrated_connection).add(media.id, tag.id)
+
+    assert tags.mega_popular_tag_ids(1.0, total_media_count=1) == frozenset({tag.id})
+
+
+def test_negative_total_media_count_never_produces_popular_tags(
+    migrated_connection: sqlite3.Connection,
+) -> None:
+    tags = tag_repository.TagRepository(migrated_connection)
+    tag = tags.create("vacation")
+
+    assert tags.mega_popular_tag_ids(-1.0, total_media_count=-1) == frozenset()
+    assert tags.get(tag.id) == tag

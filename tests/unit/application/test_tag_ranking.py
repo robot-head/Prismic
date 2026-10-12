@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import pytest
 
 from prismic.application.tag_ranking import promote_ranked_tags
@@ -98,3 +100,34 @@ def test_a_mega_popular_checked_tag_is_left_alone_not_double_counted() -> None:
     )
 
     assert result == [_A, _C, _B]
+
+
+def test_correlation_at_the_threshold_is_promoted() -> None:
+    tags = [Tag(id=1, name="checked"), Tag(id=2, name="exact"), Tag(id=3, name="other")]
+
+    ranked = promote_ranked_tags(
+        tags,
+        frozenset({1}),
+        mega_popular_ids=frozenset(),
+        correlations={2: 0.8},
+        correlation_threshold=0.8,
+    )
+
+    assert ranked == [tags[0], tags[1], tags[2]]
+
+
+def test_missing_correlation_uses_zero_when_threshold_is_zero() -> None:
+    missing = Tag(id=1, name="missing")
+    zero = Tag(id=2, name="zero")
+    strong = Tag(id=3, name="strong")
+    correlations: defaultdict[int, float] = defaultdict(float, {zero.id: 0.0, strong.id: 0.3})
+
+    ranked = promote_ranked_tags(
+        [missing, zero, strong],
+        frozenset(),
+        mega_popular_ids=frozenset(),
+        correlations=correlations,
+        correlation_threshold=0.0,
+    )
+
+    assert ranked == [strong, missing, zero]

@@ -16,13 +16,17 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import PySide6.QtCore as qtcore
+import PySide6.QtGui as qtgui
+import PySide6.QtWidgets as qtwidgets
 import pytest
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, QMargins, QRect, Qt, QTimer
 from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton, QWidget
 from pytestqt.qtbot import QtBot
 
-from prismic.ui.frameless_dialog import MessageDialog, SizeGrip
+from prismic.ui.frameless_dialog import FramelessDialog, MessageDialog, SizeGrip, TitleBar
 from tests.gui._dialog_helpers import message_dialog
+from tests.gui._ui_test_helpers import mouse_event
 from tests.gui.helpers import shown_parent
 
 
@@ -227,3 +231,211 @@ def test_a_message_dialog_has_no_resize_grip(qtbot: QtBot) -> None:
     qtbot.addWidget(dialog)
 
     assert dialog.findChild(SizeGrip) is None
+
+
+def test_parented_message_dialog_centers_over_parent_before_showing(qtbot: QtBot) -> None:
+    parent = shown_parent(qtbot, 420, 260, position=qtcore.QPoint(100, 120))
+
+    dialog = message_dialog(parent)
+
+    assert dialog.frameGeometry().center() == parent.frameGeometry().center()
+
+
+def test_parented_message_dialog_clamps_its_frame_to_the_screen(qtbot: QtBot) -> None:
+    parent = shown_parent(qtbot, 320, 220)
+    available = parent.screen().availableGeometry()
+    parent.move(available.right() - 20, available.bottom() - 20)
+
+    dialog = message_dialog(parent)
+    qtbot.addWidget(dialog)
+
+    frame = dialog.frameGeometry()
+    assert available.contains(frame)
+    assert frame.right() == available.right() - 1
+    assert frame.bottom() == available.bottom() - 1
+
+
+def test_resizable_frameless_dialog_keeps_its_grip_inside_the_lower_right_corner(
+    qtbot: QtBot,
+) -> None:
+    dialog = FramelessDialog("Resizable", resizable=True)
+    qtbot.addWidget(dialog)
+    dialog.resize(320, 240)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    grip = dialog._size_grip  # noqa: SLF001
+    assert grip is not None
+    assert grip.size() == qtcore.QSize(16, 16)
+    assert grip.pos() == qtcore.QPoint(
+        dialog.width() - grip.width() - 1, dialog.height() - grip.height() - 1
+    )
+
+    dialog.resize(500, 360)
+    qtbot.waitUntil(
+        lambda: (
+            grip.pos()
+            == qtcore.QPoint(dialog.width() - grip.width() - 1, dialog.height() - grip.height() - 1)
+        )
+    )
+
+
+def test_size_grip_draws_the_three_diagonals_in_its_lower_right_corner(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = FramelessDialog("Resizable", resizable=True)
+    qtbot.addWidget(dialog)
+    grip = dialog._size_grip  # noqa: SLF001
+    assert grip is not None
+    lines: list[tuple[int, int, int, int]] = []
+
+    class RecordingPainter:
+        RenderHint = qtgui.QPainter.RenderHint
+
+        def __init__(self, _widget: qtwidgets.QWidget) -> None:
+            pass
+
+        def setRenderHint(self, *_args: object) -> None:
+            pass
+
+        def setPen(self, *_args: object) -> None:
+            pass
+
+        def drawLine(self, x1: int, y1: int, x2: int, y2: int) -> None:
+            lines.append((x1, y1, x2, y2))
+
+    monkeypatch.setattr("prismic.ui.frameless_dialog.QPainter", RecordingPainter)
+    grip.paintEvent(None)  # type: ignore[arg-type]
+
+    assert lines == [(14, 13, 13, 14), (14, 9, 9, 14), (14, 5, 5, 14)]
+
+
+def test_message_dialog_keeps_its_layout_and_minimum_width_contract(qtbot: QtBot) -> None:
+    dialog = MessageDialog(
+        None,
+        "Title",
+        "A message with enough text to wrap when it needs to.",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        QMessageBox.StandardButton.Yes,
+    )
+    qtbot.addWidget(dialog)
+
+    outer = dialog.layout()
+    assert outer is not None
+    body = outer.itemAt(1).layout()
+    assert body is not None
+    button_row = body.itemAt(1).layout()
+    assert button_row is not None
+    text = dialog.findChild(QLabel, "messageDialogText")
+    assert text is not None
+
+    assert dialog.minimumWidth() == 360
+    assert dialog.isModal()
+    assert text.maximumWidth() == 420
+    assert text.wordWrap()
+    assert outer.contentsMargins() == QMargins(0, 0, 0, 0)
+    assert outer.spacing() == 0
+    assert body.contentsMargins() == QMargins(20, 16, 20, 16)
+    assert body.spacing() == 16
+    assert button_row.spacing() == 8
+    assert dialog.title_bar.layout().contentsMargins() == QMargins(14, 0, 0, 0)
+    assert dialog.title_bar.layout().spacing() == 0
+
+    buttons = buttons_of(dialog)
+    assert [button.text() for button in buttons] == ["Yes", "Cancel"]
+    assert buttons[0].isDefault()
+    assert not buttons[1].isDefault()
+
+
+def test_frameless_dialog_centering_accounts_for_frame_margins(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = FramelessDialog("Title")
+    qtbot.addWidget(dialog)
+
+    class FrameHandle:
+        def frameMargins(self) -> QMargins:
+            return QMargins(4, 8, 6, 12)
+
+    class Screen:
+        def availableGeometry(self) -> QRect:
+            return QRect(0, 0, 1000, 800)
+
+    class ParentWindow:
+        def window(self) -> ParentWindow:
+            return self
+
+        def frameGeometry(self) -> QRect:
+            return QRect(201, 161, 100, 80)
+
+        def screen(self) -> Screen:
+            return Screen()
+
+    monkeypatch.setattr(dialog, "parentWidget", lambda: ParentWindow())
+    monkeypatch.setattr(dialog, "create", lambda: None)
+    monkeypatch.setattr(dialog, "windowHandle", lambda: FrameHandle())
+    monkeypatch.setattr(dialog, "width", lambda: 100)
+    monkeypatch.setattr(dialog, "height", lambda: 60)
+    positions: list[tuple[int, int]] = []
+    monkeypatch.setattr(dialog, "move", lambda x, y: positions.append((x, y)))
+
+    dialog._center_on_parent()
+
+    assert positions == [(200, 169)]
+
+
+@pytest.mark.parametrize(
+    ("move_result", "has_handle", "left_accepted", "expected_calls"),
+    [(True, True, True, 1), (False, True, False, 1), (False, False, False, 0)],
+    ids=["move-started", "move-denied", "no-handle"],
+)
+def test_title_bar_starts_system_move_only_for_a_left_press(
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    move_result: bool,
+    has_handle: bool,
+    left_accepted: bool,
+    expected_calls: int,
+) -> None:
+    title_bar = TitleBar("Title")
+    qtbot.addWidget(title_bar)
+    title_bar.show()
+    calls: list[None] = []
+
+    class MoveHandle:
+        def startSystemMove(self) -> bool:
+            calls.append(None)
+            return move_result
+
+    handle = MoveHandle() if has_handle else None
+
+    class WindowStub:
+        def windowHandle(self) -> MoveHandle | None:
+            return handle
+
+    monkeypatch.setattr(title_bar, "window", lambda: WindowStub())
+    event = mouse_event(QEvent.Type.MouseButtonPress, Qt.MouseButton.LeftButton)
+    event.ignore()
+
+    title_bar.mousePressEvent(event)
+
+    assert len(calls) == expected_calls
+    assert event.isAccepted() is left_accepted
+
+    right_press = mouse_event(QEvent.Type.MouseButtonPress, Qt.MouseButton.RightButton)
+    right_press.ignore()
+    title_bar.mousePressEvent(right_press)
+
+    assert len(calls) == expected_calls
+    assert not right_press.isAccepted()
+
+
+def test_title_bar_swallows_double_clicks(qtbot: QtBot) -> None:
+    title_bar = TitleBar("Title")
+    qtbot.addWidget(title_bar)
+    event = mouse_event(QEvent.Type.MouseButtonDblClick, Qt.MouseButton.LeftButton)
+    event.ignore()
+
+    title_bar.mouseDoubleClickEvent(event)
+
+    assert event.isAccepted()

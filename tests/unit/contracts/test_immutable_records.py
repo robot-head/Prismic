@@ -1,14 +1,32 @@
+from __future__ import annotations
+
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
 
+import prismic.application.tag_ranking_settings as ranking_settings
 import prismic.domain.collection as collection_domain
 import prismic.domain.media as media_domain
 import prismic.domain.tag as tag_domain
 import prismic.indexing.reconciler as reconciler
 import prismic.indexing.scanner as scanner
 import prismic.media.loader as loader
+from prismic.application.input.resolver import InputEvent
+from prismic.application.input.shortcuts import SHORTCUTS
+from prismic.indexing.reconciler import HashedFile
 from tests.unit._record_contracts import assert_frozen_and_slotted
+
+
+def test_public_input_and_settings_records_are_frozen_and_slotted() -> None:
+    records: tuple[tuple[object, str], ...] = (
+        (InputEvent(key="a"), "key"),
+        (SHORTCUTS[0], "label"),
+        (ranking_settings.TagRankingSettings(), "correlation_threshold"),
+    )
+
+    for record, field in records:
+        assert_frozen_and_slotted(record, field=field)
 
 
 @pytest.mark.parametrize(
@@ -61,3 +79,11 @@ from tests.unit._record_contracts import assert_frozen_and_slotted
 )
 def test_value_records_are_frozen_and_slotted(record: object, field: str) -> None:
     assert_frozen_and_slotted(record, field=field)
+
+
+def test_hashed_file_is_frozen_and_uses_slots() -> None:
+    hashed = HashedFile(relative_path="photo.jpg", content_hash="known-hash", size=12, mtime=98.5)
+
+    with pytest.raises(FrozenInstanceError):
+        hashed.relative_path = "renamed.jpg"  # type: ignore[misc]
+    assert not hasattr(hashed, "__dict__")

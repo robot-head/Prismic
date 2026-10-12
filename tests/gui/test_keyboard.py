@@ -1,13 +1,15 @@
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QKeyEvent, QKeySequence
 from PySide6.QtWidgets import QApplication, QDialog, QWidget
 from pytestqt.qtbot import QtBot
 
 from prismic.application.input import shortcuts
+from prismic.application.input.shortcuts import ShortcutBindings
 from prismic.application.session import PrismicSession
+from prismic.ui.keyboard import KeyboardController, literal_character
 from prismic.ui.main_window import MainWindow
 from prismic.ui.settings_dialog import SettingsDialog
 
@@ -911,3 +913,96 @@ def test_view_history_shortcuts_work_while_a_tag_search_box_has_focus(
     qtbot.keyClick(window, Qt.Key.Key_Left, Qt.KeyboardModifier.ControlModifier)
 
     assert session.state.current_item == first_id
+
+
+@pytest.mark.parametrize(
+    ("binding", "expected"),
+    [("Q", "q"), ("1", "1"), ("Left", None), ("", None)],
+    ids=["letter", "digit", "named-key", "empty"],
+)
+def test_literal_character_only_accepts_single_character_bindings(
+    binding: str, expected: str | None
+) -> None:
+    assert literal_character(binding) == expected
+
+
+def test_bare_modifier_key_event_is_not_consumed(qtbot: QtBot) -> None:
+    bindings = shortcuts.ShortcutBindings()
+    controller = KeyboardController(
+        bindings,
+        on_navigate_previous=lambda: None,
+        on_navigate_next=lambda: None,
+        on_history_back=lambda: None,
+        on_history_forward=lambda: None,
+        on_undo=lambda: None,
+        on_redo=lambda: None,
+        on_focus_item_tags=lambda: None,
+        on_toggle_tag_shortcut=lambda _slot: None,
+        on_toggle_focus_mode=lambda: None,
+        on_swap_tag_numbering=lambda: None,
+        on_shuffle_results=lambda: None,
+        on_true_fullscreen=lambda: None,
+    )
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_Control,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    assert controller.handle_key_press(event, text_editing=False) is False
+
+
+def _keyboard_controller() -> tuple[KeyboardController, list[str], list[int]]:
+    calls: list[str] = []
+    slots: list[int] = []
+    controller = KeyboardController(
+        ShortcutBindings(),
+        on_navigate_previous=lambda: calls.append("previous"),
+        on_navigate_next=lambda: calls.append("next"),
+        on_history_back=lambda: calls.append("back"),
+        on_history_forward=lambda: calls.append("forward"),
+        on_undo=lambda: calls.append("undo"),
+        on_redo=lambda: calls.append("redo"),
+        on_focus_item_tags=lambda: calls.append("focus"),
+        on_toggle_tag_shortcut=slots.append,
+        on_toggle_focus_mode=lambda: calls.append("focus-mode"),
+        on_swap_tag_numbering=lambda: calls.append("swap"),
+        on_shuffle_results=lambda: calls.append("shuffle"),
+        on_true_fullscreen=lambda: calls.append("fullscreen"),
+    )
+    return controller, calls, slots
+
+
+def _key_event(
+    key: Qt.Key, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier
+) -> QKeyEvent:
+    return QKeyEvent(QEvent.Type.KeyPress, key, modifiers)
+
+
+def test_keyboard_controller_reports_handled_commands_and_unknown_shortcuts() -> None:
+    controller, calls, slots = _keyboard_controller()
+
+    assert controller.run("unknown.shortcut") is False
+    assert calls == []
+    assert controller.run(shortcuts.FOCUS_MODE) is True
+    assert calls == ["focus-mode"]
+
+    assert controller.handle_key_press(_key_event(Qt.Key.Key_1), text_editing=False) is True
+    assert slots == [0]
+    assert controller.handle_key_press(_key_event(Qt.Key.Key_Up), text_editing=True) is True
+    assert calls[-1] == "previous"
+    assert (
+        controller.handle_key_press(
+            _key_event(Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier), text_editing=False
+        )
+        is True
+    )
+    assert calls[-1] == "undo"
+    assert (
+        controller.handle_key_press(
+            _key_event(Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier), text_editing=False
+        )
+        is True
+    )
+    assert calls[-1] == "redo"
+    assert controller.handle_key_press(_key_event(Qt.Key.Key_F12), text_editing=False) is False

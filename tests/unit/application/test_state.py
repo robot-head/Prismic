@@ -1,3 +1,5 @@
+import pytest
+
 from prismic.application.state import ApplicationState
 from prismic.domain.media import MediaState
 from prismic.persistence.repositories.mapping_repository import MappingRepository
@@ -173,3 +175,37 @@ def test_current_item_is_always_included_in_selected_items(
 
     assert state.current_item == a
     assert state.selected_items == frozenset({a})
+
+
+@pytest.mark.parametrize(
+    ("previous_order", "previous_current", "result_set", "expected"),
+    [
+        ([10, 20, 30, 40, 50], 40, [30, 50], 50),
+        ([10, 20, 30, 40, 50], 40, [20, 30], 30),
+        ([10, 20, 30, 40], 30, [10, 20], 20),
+        ([10, 20, 30, 40], 40, [10], 10),
+        ([99, 10, 20, 30, 40], 99, [20, 40], 20),
+    ],
+    ids=[
+        "forward-wins-equal-distance",
+        "nearest-backward",
+        "backward-xor-boundary",
+        "far-backward",
+        "negative-index-does-not-wrap",
+    ],
+)
+def test_current_item_fallback_search_uses_neighbor_positions(
+    previous_order: list[int],
+    previous_current: int,
+    result_set: list[int],
+    expected: int,
+) -> None:
+    state = ApplicationState(result_set=result_set)
+
+    assert state._resolve_current_item(previous_order, previous_current) == expected
+
+
+def test_current_item_fallback_uses_the_first_new_result() -> None:
+    state = ApplicationState(result_set=[40, 50])
+
+    assert state._resolve_current_item([10, 20, 30], 20) == 40

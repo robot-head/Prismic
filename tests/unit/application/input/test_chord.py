@@ -91,3 +91,32 @@ def test_a_new_key_press_resets_the_timeout_clock() -> None:
 
     assert timed_out is False
     assert chord.pending_keys == ("g", "g")
+
+
+def test_chord_internal_state_is_not_constructor_input_or_repr() -> None:
+    chord = ChordState()
+    chord.press("g")
+
+    assert repr(chord) == "ChordState(timeout_seconds=1.0)"
+    with pytest.raises(TypeError):
+        ChordState(_pending_keys=["g"])
+    with pytest.raises(TypeError):
+        ChordState(_elapsed_since_last_key=0.5)
+
+
+def test_default_chord_timeout_allows_a_key_until_one_second() -> None:
+    chord = ChordState()
+    chord.press("g")
+
+    assert chord.advance_time(0.999) is False
+    assert chord.is_pending is True
+    assert chord.advance_time(0.001) is True
+    assert chord.is_pending is False
+
+
+def test_nonmatching_lexicographically_later_key_cancels_prefix() -> None:
+    chord = ChordState()
+    chord.press("g")
+
+    assert chord.match({("h", "h"): "go_home"}) is None
+    assert chord.is_pending is False

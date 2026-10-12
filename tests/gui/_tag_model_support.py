@@ -9,7 +9,7 @@ from prismic.ui.tag_model import (
     UncheckedSlotRole,
 )
 from prismic.ui.tag_row_delegate import TagRowDelegate
-from tests.gui._mutation_helpers import RecordingCalls, assert_editor_geometry
+from tests.gui._ui_test_helpers import RecordingCalls, assert_editor_geometry
 
 __all__ = [
     "CheckedRole",

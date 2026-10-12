@@ -5,6 +5,7 @@ import pytest
 
 from prismic.application.input import shortcuts
 from prismic.application.input.shortcuts import (
+    QUICK_SELECT_SLOT_COUNT,
     SHORTCUTS,
     ShortcutBindings,
     ShortcutScope,
@@ -347,3 +348,25 @@ def test_a_malformed_shortcuts_section_is_ignored(tmp_path: Path) -> None:
     store.save({"shortcuts": "not a mapping"})
 
     assert ShortcutBindings(store).binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
+
+
+@pytest.mark.parametrize(
+    "slot",
+    range(QUICK_SELECT_SLOT_COUNT),
+    ids=lambda slot: f"slot-{slot + 1}",
+)
+def test_quick_select_definitions_number_every_slot_and_explain_typing_once(slot: int) -> None:
+    definition = shortcuts.definition(shortcuts.quick_select_id(slot))
+    number = slot + 1
+
+    assert definition.label == f"Toggle numbered tag {number}"
+    assert f"numbers {number} " in definition.description
+    assert definition.description.startswith(
+        f"Toggle whichever tag the Edit list currently numbers {number} "
+    )
+    assert ("Type the key instead of toggling" in definition.description) is (slot == 0)
+    assert ("Still works while a tag search box has focus" in definition.description) is (slot == 0)
+
+
+def test_keycaps_parse_multiple_modifiers_in_noncanonical_order() -> None:
+    assert keycaps("Alt+Ctrl+Shift+K") == ("Alt", "Ctrl", "Shift", "K")

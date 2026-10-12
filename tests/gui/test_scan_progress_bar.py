@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pytestqt.qtbot import QtBot
 
 from tests.gui._progress_test_helpers import report_progress
@@ -32,3 +34,16 @@ def test_the_label_does_not_change_as_progress_ticks_in(qtbot: QtBot) -> None:
     report_progress(qtbot, bar)
 
     assert bar.format() == "Scanning all files"
+
+
+def test_scan_progress_bar_starts_in_later_scan_mode_and_clamps_its_range(qtbot: QtBot) -> None:
+    bar = make_scan_progress_bar(qtbot)
+
+    assert bar.format() == "Detecting any moved files"
+    assert bar.isTextVisible()
+    assert (bar.minimumWidth(), bar.maximumWidth()) == (300, 300)
+    assert (bar.minimum(), bar.maximum(), bar.value()) == (0, 0, 0)
+
+    report_progress(qtbot, bar)
+
+    assert (bar.minimum(), bar.maximum()) == (0, 3)

@@ -1,11 +1,16 @@
+from __future__ import annotations
+
+import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+import pytest
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QPainterPath, QPaintEvent, QPixmap
 from pytestqt.qtbot import QtBot
 
 from prismic.application.worker_pool import WorkerPool
-from prismic.ui.selection_grid_view import SelectionGridView, _best_grid
+from prismic.ui import _thumbnail_badge, selection_grid_view, thumbnail_provider, thumbnail_services
+from prismic.ui.selection_grid_view import _MARGIN, _SPACING, SelectionGridView, _best_grid
 from prismic.ui.thumbnail_provider import ThumbnailProvider
 from prismic.ui.thumbnail_services import ThumbnailServices
 
@@ -133,3 +138,234 @@ def test_the_requested_dimension_tracks_the_actual_cell_size(qtbot: QtBot, tmp_p
 
     provider.request = original_request  # type: ignore[method-assign]
     pool.shutdown(wait=True)
+
+
+def test_grid_keeps_a_candidate_with_one_pixel_cells() -> None:
+    columns, cell_width, cell_height = _best_grid(2, 32, 1)
+
+    assert columns == 2
+    assert cell_width == 1
+    assert cell_height == 1
+
+
+@pytest.mark.parametrize(
+    ("count", "width", "height"),
+    [
+        (count, width, height)
+        for count in range(1, 15)
+        for width, height in (
+            (20, 20),
+            (31, 47),
+            (97, 61),
+            (100, 30),
+            (301, 211),
+            (401, 401),
+        )
+    ],
+)
+def test_grid_uses_the_candidate_with_the_largest_fitting_cell(
+    count: int, width: int, height: int
+) -> None:
+    available_w = max(1.0, width - 2 * _MARGIN)
+    available_h = max(1.0, height - 2 * _MARGIN)
+    candidates = [(min(available_w, available_h / count), 1, available_w, available_h / count)]
+    for columns in range(1, count + 1):
+        if columns == 1:
+            continue
+        rows = math.ceil(count / columns)
+        cell_w = (available_w - (columns - 1) * _SPACING) / columns
+        cell_h = (available_h - (rows - 1) * _SPACING) / rows
+        if cell_w > 0 and cell_h > 0:
+            candidates.append((min(cell_w, cell_h), columns, cell_w, cell_h))
+
+    cols, cell_w, cell_h = _best_grid(count, width, height)
+    assert cell_w > 0 and cell_h > 0
+    expected = max(candidates, key=lambda candidate: candidate[0])
+    assert (cols, cell_w, cell_h) == pytest.approx((expected[1], expected[2], expected[3]))
+
+
+def _grid_view(
+    provider: thumbnail_provider.ThumbnailProvider | None = None,
+) -> selection_grid_view.SelectionGridView:
+    thumbnails = provider or thumbnail_provider.ThumbnailProvider()
+    return selection_grid_view.SelectionGridView(
+        thumbnail_services.ThumbnailServices(thumbnails, lambda: None)
+    )
+
+
+def _add_grid_view(
+    qtbot, provider: thumbnail_provider.ThumbnailProvider | None = None
+) -> selection_grid_view.SelectionGridView:
+    view = _grid_view(provider)
+    qtbot.addWidget(view)
+    return view
+
+
+def test_grid_thumbnail_events_refresh_only_a_visible_item(qtbot) -> None:
+    view = _add_grid_view(qtbot)
+    updates: list[bool] = []
+    view.update = lambda: updates.append(True)  # type: ignore[method-assign]
+    view.set_items([(4, Path("a.jpg")), (9, Path("b.jpg"))])
+    updates.clear()
+
+    view._on_thumbnail_event(8)
+    assert updates == []
+
+    class EqualId(int):
+        pass
+
+    view._on_thumbnail_event(EqualId(9))
+    assert updates == [True]
+
+
+class _Pen:
+    def color(self) -> str:
+        return "icon-color"
+
+
+class _Painter:
+    """Small recorder for the geometric arguments passed to QPainter."""
+
+    def __init__(self) -> None:
+        self.paths: list[QPainterPath] = []
+        self.polygons: list[object] = []
+        self.lines: list[tuple[int, int, int, int]] = []
+        self.pixmaps: list[tuple[object, QPixmap]] = []
+        self.fills: list[tuple[object, object]] = []
+        self.clip_paths: list[QPainterPath] = []
+        self.pens: list[object] = []
+        self.save_depth = 0
+
+    def setRenderHint(self, _hint: object) -> None:
+        pass
+
+    def pen(self) -> _Pen:
+        return _Pen()
+
+    def setPen(self, _pen: object) -> None:
+        self.pens.append(_pen)
+
+    def setBrush(self, _brush: object) -> None:
+        pass
+
+    def drawPath(self, path: QPainterPath) -> None:
+        self.paths.append(path)
+
+    def drawPolygon(self, polygon: object) -> None:
+        self.polygons.append(polygon)
+
+    def drawLine(self, x1: int, y1: int, x2: int, y2: int) -> None:
+        self.lines.append((x1, y1, x2, y2))
+
+    def save(self) -> None:
+        self.save_depth += 1
+
+    def restore(self) -> None:
+        self.save_depth -= 1
+
+    def setClipPath(self, path: QPainterPath) -> None:
+        self.clip_paths.append(path)
+
+    def drawPixmap(self, point: object, pixmap: QPixmap) -> None:
+        self.pixmaps.append((point, pixmap))
+
+    def fillRect(self, rect: object, color: object) -> None:
+        self.fills.append((rect, color))
+
+
+class _EventPainter(_Painter):
+    class RenderHint:
+        Antialiasing = object()
+
+    last: _EventPainter | None = None
+
+    def __init__(self, *_args: object) -> None:
+        super().__init__()
+        _EventPainter.last = self
+
+    def end(self) -> None:
+        pass
+
+
+def test_grid_paints_cells_in_display_order_with_row_and_column_spacing(
+    qtbot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    view = _add_grid_view(qtbot)
+    view.resize(400, 300)
+    items = [(media_id, Path(f"{media_id}.jpg")) for media_id in range(1, 6)]
+    view.set_items(items)
+    painted: list[tuple[int, QRectF]] = []
+    view._paint_cell = lambda _painter, rect, media_id, _path: painted.append((media_id, rect))  # type: ignore[method-assign]
+    monkeypatch.setattr(selection_grid_view, "QPainter", _EventPainter)
+
+    view.paintEvent(QPaintEvent(view.rect()))
+
+    assert [media_id for media_id, _rect in painted] == [1, 2, 3, 4, 5]
+    assert sum(
+        [(rect.x(), rect.y(), rect.width(), rect.height()) for _media_id, rect in painted],
+        (),
+    ) == pytest.approx(
+        sum(
+            [
+                (12, 12, 121 + 1 / 3, 135),
+                (12 + 127 + 1 / 3, 12, 121 + 1 / 3, 135),
+                (12 + 2 * (127 + 1 / 3), 12, 121 + 1 / 3, 135),
+                (12, 153, 121 + 1 / 3, 135),
+                (12 + 127 + 1 / 3, 153, 121 + 1 / 3, 135),
+            ],
+            (),
+        )
+    )
+
+
+def test_grid_thumbnail_dimension_uses_ceil_and_never_falls_below_one(
+    qtbot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    view = _add_grid_view(qtbot)
+    monkeypatch.setattr(view, "devicePixelRatioF", lambda: 1.25)
+
+    assert view._required_dimension(QRectF(0, 0, 100.1, 60.0)) == 126
+    assert view._required_dimension(QRectF(0, 0, 0, 0)) == 1
+
+
+@pytest.mark.parametrize(
+    ("source_size", "expected_point", "expected_size"),
+    [
+        ((80, 20), (10, 37.5), (200, 50)),
+        ((20, 80), (52.5, 20), (30, 120)),
+    ],
+)
+def test_grid_centers_a_letterboxed_thumbnail_inside_its_cell(
+    qtbot, monkeypatch, source_size, expected_point, expected_size
+) -> None:
+    provider = thumbnail_provider.ThumbnailProvider()
+    provider._cache[7] = QPixmap(*source_size)
+    view = _add_grid_view(qtbot, provider)
+    monkeypatch.setattr(view, "devicePixelRatioF", lambda: 2.0)
+    painter = _Painter()
+
+    view._paint_cell(painter, QRectF(10, 20, 100, 60), 7, Path("photo.jpg"))  # type: ignore[arg-type]
+
+    assert painter.save_depth == 0
+    expected_clip = QPainterPath()
+    expected_clip.addRoundedRect(QRectF(10, 20, 100, 60), 6, 6)
+    assert painter.clip_paths == [expected_clip]
+    assert len(painter.pixmaps) == 1
+    point, scaled = painter.pixmaps[0]
+    assert (point.x(), point.y()) == pytest.approx(expected_point)  # type: ignore[attr-defined]
+    assert (scaled.width(), scaled.height()) == expected_size
+
+
+def test_grid_video_badge_uses_the_compact_grid_scale(qtbot, monkeypatch) -> None:
+    view = _add_grid_view(qtbot)
+    badge_calls: list[tuple[QRectF, float]] = []
+    monkeypatch.setattr(
+        _thumbnail_badge,
+        "paint_play_badge",
+        lambda _painter, rect, *, size_fraction: badge_calls.append((rect, size_fraction)),
+    )
+    rect = QRectF(12, 15, 100, 80)
+
+    view._paint_cell(_Painter(), rect, 17, Path("clip.webm"))  # type: ignore[arg-type]
+
+    assert badge_calls == [(rect, 0.16)]

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import prismic.application.tag_ranking_settings as ranking_settings
 from prismic.application.tag_ranking_settings import (
     DEFAULT_CORRELATION_THRESHOLD,
     DEFAULT_MEGA_POPULAR_THRESHOLD,
@@ -77,3 +78,19 @@ def test_save_does_not_disturb_other_preferences(tmp_path: Path) -> None:
     TagRankingSettingsStore(preferences).save(TagRankingSettings())
 
     assert preferences.load()["shortcuts"] == {"dismiss": "Escape"}
+
+
+def test_tag_ranking_settings_reject_fraction_values_above_one(tmp_path: Path) -> None:
+    preferences = PreferencesStore(tmp_path / "preferences.json")
+    preferences.save({"tag_ranking": {"correlation_threshold": 1.5, "mega_popular_threshold": 1.5}})
+
+    settings = ranking_settings.TagRankingSettingsStore(preferences).load()
+
+    assert settings.correlation_threshold == ranking_settings.DEFAULT_CORRELATION_THRESHOLD
+    assert settings.mega_popular_threshold == ranking_settings.DEFAULT_MEGA_POPULAR_THRESHOLD
+
+
+def test_default_mega_popular_threshold_is_fifteen_percent(tmp_path: Path) -> None:
+    settings = TagRankingSettingsStore(PreferencesStore(tmp_path / "preferences.json"))
+
+    assert settings.load().mega_popular_threshold == 0.15

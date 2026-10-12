@@ -2,11 +2,12 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QImage, QPixmap
 from pytestqt.qtbot import QtBot
 
 from prismic.media.image import ImageLoadError, load_image
 from prismic.ui.image_view import ImageView
-from tests.gui._mutation_helpers import wheel_event
+from tests.gui._ui_test_helpers import wheel_event
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "media"
 
@@ -77,3 +78,54 @@ def test_pan_mode_is_scroll_hand_drag(qtbot: QtBot) -> None:
 
     assert view.zoom == 1.0
     assert view.dragMode() == view.DragMode.ScrollHandDrag
+
+
+def test_exact_single_wheel_delta_zooms_in(qtbot: QtBot) -> None:
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(QImage(100, 100, QImage.Format.Format_RGB32))
+    before = view.zoom
+    event = wheel_event(1)
+
+    view.wheelEvent(event)
+
+    assert view.zoom > before
+
+
+def test_movie_frames_update_the_pixmap_and_late_frames_without_a_movie_are_ignored(
+    qtbot: QtBot,
+) -> None:
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(QImage(10, 10, QImage.Format.Format_RGB32))
+
+    # A queued frameChanged signal may arrive just after clear/stop removed
+    # the movie; it must be ignored while the still-image pixmap remains.
+    view._on_movie_frame()
+
+    class _Movie:
+        def __init__(self) -> None:
+            self.pixmap = QPixmap(10, 10)
+            self.pixmap.fill(QColor("#e02020"))
+
+        def currentPixmap(self) -> QPixmap:
+            return self.pixmap
+
+    movie = _Movie()
+    view._movie = movie
+    view._on_movie_frame()
+
+    assert view._pixmap_item is not None
+    assert view._pixmap_item.pixmap().toImage().pixelColor(0, 0) == QColor("#e02020")
+
+
+def test_double_click_after_manual_zoom_fits_the_image_again(qtbot: QtBot) -> None:
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(QImage(100, 100, QImage.Format.Format_RGB32))
+    view.zoom_in()
+    assert view.zoom == 1.25
+
+    qtbot.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton)
+
+    assert view.zoom == 1.0

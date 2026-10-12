@@ -52,3 +52,31 @@ def test_a_recent_clicks_cutoff_controls_the_original_order(seconds_ago: int) ->
     clock[0] = seconds_ago
 
     assert tracker.order([_A, _B, _C]) == [_A, _B, _C]
+
+
+def _recency_order_after(elapsed_seconds: float) -> list[Tag]:
+    clock = [0.0]
+    tracker = TagRecencyTracker(_clock=lambda: clock[0])
+    clicked = Tag(id=3, name="clicked")
+    other = Tag(id=1, name="other")
+    tracker.record_click(clicked.id)
+    clock[0] = elapsed_seconds
+    return tracker.order([other, clicked])
+
+
+def test_recency_window_keeps_a_one_second_old_click_recent() -> None:
+    clicked, other = Tag(id=3, name="clicked"), Tag(id=1, name="other")
+
+    assert _recency_order_after(1.0) == [clicked, other]
+
+
+def test_expired_recency_returns_to_the_callers_order() -> None:
+    clicked, other = Tag(id=3, name="clicked"), Tag(id=1, name="other")
+
+    assert _recency_order_after(30 * 60 + 1) == [other, clicked]
+
+
+def test_recency_window_includes_the_exact_boundary() -> None:
+    clicked, other = Tag(id=3, name="clicked"), Tag(id=1, name="other")
+
+    assert _recency_order_after(30 * 60) == [clicked, other]
