@@ -47,6 +47,11 @@ def _selected_rows(view: ResultListView) -> list[int]:
     return sorted(i.row() for i in view.selectionModel().selectedIndexes())
 
 
+def _select_first_and_third(qtbot: QtBot, view: ResultListView) -> None:
+    _click(qtbot, view, 1)
+    _click(qtbot, view, 3, Qt.KeyboardModifier.ControlModifier)
+
+
 def test_extended_selection_mode_is_set(qtbot: QtBot) -> None:
     # `qtbot` is unused beyond guaranteeing a `QApplication` exists before
     # any widget is constructed -- without it, this crashes the whole
@@ -69,8 +74,7 @@ def test_plain_click_selects_only_that_row(qtbot: QtBot) -> None:
 def test_ctrl_click_adds_an_unselected_row(qtbot: QtBot) -> None:
     view = _build(qtbot)
 
-    _click(qtbot, view, 1)
-    _click(qtbot, view, 3, Qt.KeyboardModifier.ControlModifier)
+    _select_first_and_third(qtbot, view)
 
     assert _selected_rows(view) == [1, 3]
 
@@ -89,8 +93,7 @@ def test_ctrl_click_on_an_already_selected_row_deselects_it(qtbot: QtBot) -> Non
 def test_ctrl_click_deselecting_one_row_leaves_others_selected(qtbot: QtBot) -> None:
     view = _build(qtbot)
 
-    _click(qtbot, view, 1)
-    _click(qtbot, view, 3, Qt.KeyboardModifier.ControlModifier)  # 1 and 3 selected
+    _select_first_and_third(qtbot, view)  # 1 and 3 selected
     _click(qtbot, view, 1, Qt.KeyboardModifier.ControlModifier)  # deselect 1
 
     assert _selected_rows(view) == [3]

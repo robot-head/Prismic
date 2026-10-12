@@ -9,6 +9,8 @@ from prismic.indexing.reconciler import HashedFile, Reconciler, run_reconciliati
 from prismic.persistence.repositories.media_repository import MediaRepository
 from prismic.persistence.repositories.scan_stats_repository import ScanStatsRepository
 
+_ReconciliationContext = tuple[Collection, Reconciler, MediaRepository, sqlite3.Connection]
+
 
 @pytest.fixture
 def collection(tmp_path: Path) -> Collection:
@@ -25,6 +27,16 @@ def media_repository(migrated_connection: sqlite3.Connection) -> MediaRepository
     return MediaRepository(migrated_connection)
 
 
+@pytest.fixture
+def reconciliation_context(
+    collection: Collection,
+    reconciler: Reconciler,
+    media_repository: MediaRepository,
+    migrated_connection: sqlite3.Connection,
+) -> _ReconciliationContext:
+    return collection, reconciler, media_repository, migrated_connection
+
+
 def _run(reconciler: Reconciler, collection: Collection, connection: sqlite3.Connection) -> None:
     generation = reconciler.begin_scan()
     result = run_reconciliation(reconciler, collection, generation, connection)
@@ -36,10 +48,13 @@ def _record_one_file(
     reconciler: Reconciler,
     media_repository: MediaRepository,
     connection: sqlite3.Connection,
-) -> Media:
-    (collection.root / "a.jpg").write_bytes(b"content")
+    *,
+    content: bytes = b"content",
+) -> tuple[Media, Path]:
+    path = collection.root / "a.jpg"
+    path.write_bytes(content)
     _run(reconciler, collection, connection)
-    return media_repository.list_all()[0]
+    return media_repository.list_all()[0], path
 
 
 def _scan_two_files(
@@ -50,15 +65,27 @@ def _scan_two_files(
     _run(reconciler, collection, connection)
 
 
+def _assert_single_media_record(
+    media_repository: MediaRepository,
+    expected: Media,
+    *,
+    relative_path: str,
+    state: MediaState,
+) -> None:
+    media = media_repository.list_all()
+    assert len(media) == 1
+    assert media[0].id == expected.id
+    assert media[0].relative_path == relative_path
+    assert media[0].state == state
+
+
 def test_new_file_gets_a_new_identity(
     collection: Collection,
     reconciler: Reconciler,
     media_repository: MediaRepository,
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    (collection.root / "a.jpg").write_bytes(b"content")
-
-    _run(reconciler, collection, migrated_connection)
+    _record_one_file(collection, reconciler, media_repository, migrated_connection)
 
     media = media_repository.list_all()
     assert len(media) == 1
@@ -72,8 +99,7 @@ def test_unchanged_file_is_a_no_op(
     media_repository: MediaRepository,
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    (collection.root / "a.jpg").write_bytes(b"content")
-    _run(reconciler, collection, migrated_connection)
+    _record_one_file(collection, reconciler, media_repository, migrated_connection)
     first_pass = media_repository.list_all()
 
     _run(reconciler, collection, migrated_connection)
@@ -108,36 +134,35 @@ def test_changed_content_creates_a_new_identity_and_retires_the_old_one(
 
 
 def test_unique_move_relinks_the_existing_identity(
-    collection: Collection,
-    reconciler: Reconciler,
-    media_repository: MediaRepository,
-    migrated_connection: sqlite3.Connection,
+    reconciliation_context: _ReconciliationContext,
 ) -> None:
-    original_path = collection.root / "a.jpg"
-    original_path.write_bytes(b"content")
-    _run(reconciler, collection, migrated_connection)
-    original = media_repository.list_all()[0]
+    collection, reconciler, media_repository, migrated_connection = reconciliation_context
+    original, original_path = _record_one_file(
+        collection, reconciler, media_repository, migrated_connection
+    )
 
     original_path.rename(collection.root / "moved.jpg")
     _run(reconciler, collection, migrated_connection)
 
-    media = media_repository.list_all()
-    assert len(media) == 1
-    assert media[0].id == original.id
-    assert media[0].relative_path == "moved.jpg"
-    assert media[0].state == MediaState.ACTIVE
+    _assert_single_media_record(
+        media_repository,
+        original,
+        relative_path="moved.jpg",
+        state=MediaState.ACTIVE,
+    )
 
 
 def test_ambiguous_move_leaves_the_old_identity_unresolved(
-    collection: Collection,
-    reconciler: Reconciler,
-    media_repository: MediaRepository,
-    migrated_connection: sqlite3.Connection,
+    reconciliation_context: _ReconciliationContext,
 ) -> None:
-    original_path = collection.root / "a.jpg"
-    original_path.write_bytes(b"shared content")
-    _run(reconciler, collection, migrated_connection)
-    original = media_repository.list_all()[0]
+    collection, reconciler, media_repository, migrated_connection = reconciliation_context
+    original, original_path = _record_one_file(
+        collection,
+        reconciler,
+        media_repository,
+        migrated_connection,
+        content=b"shared content",
+    )
 
     # The original disappears from its path, and two *different* new files
     # both happen to share its content hash — Prismic must not guess which
@@ -158,21 +183,22 @@ def test_ambiguous_move_leaves_the_old_identity_unresolved(
 
 
 def test_missing_file_is_marked_missing_not_deleted(
-    collection: Collection,
-    reconciler: Reconciler,
-    media_repository: MediaRepository,
-    migrated_connection: sqlite3.Connection,
+    reconciliation_context: _ReconciliationContext,
 ) -> None:
-    original = _record_one_file(collection, reconciler, media_repository, migrated_connection)
-    target = collection.root / "a.jpg"
+    collection, reconciler, media_repository, migrated_connection = reconciliation_context
+    original, target = _record_one_file(
+        collection, reconciler, media_repository, migrated_connection
+    )
 
     target.unlink()
     _run(reconciler, collection, migrated_connection)
 
-    media = media_repository.list_all()
-    assert len(media) == 1
-    assert media[0].id == original.id
-    assert media[0].state == MediaState.MISSING
+    _assert_single_media_record(
+        media_repository,
+        original,
+        relative_path="a.jpg",
+        state=MediaState.MISSING,
+    )
 
 
 def test_unsupported_file_is_never_recorded(
@@ -189,12 +215,12 @@ def test_unsupported_file_is_never_recorded(
 
 
 def test_unreadable_file_is_skipped_without_disturbing_its_recorded_state(
-    collection: Collection,
-    reconciler: Reconciler,
-    media_repository: MediaRepository,
-    migrated_connection: sqlite3.Connection,
+    reconciliation_context: _ReconciliationContext,
 ) -> None:
-    original = _record_one_file(collection, reconciler, media_repository, migrated_connection)
+    collection, reconciler, media_repository, migrated_connection = reconciliation_context
+    original, _target = _record_one_file(
+        collection, reconciler, media_repository, migrated_connection
+    )
 
     generation = reconciler.begin_scan()
     result = reconciler.reconcile(

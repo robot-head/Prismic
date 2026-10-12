@@ -5,12 +5,13 @@ end-to-end rather than per-component.
 
 from pathlib import Path
 
-from prismic.application.commands.filter_commands import (
+from prismic.application.commands import (
     FilterDeselectCommand,
     FilterSelectCommand,
+    MappingAddCommand,
+    MappingRemoveCommand,
+    TagCreateCommand,
 )
-from prismic.application.commands.mapping_commands import MappingAddCommand, MappingRemoveCommand
-from prismic.application.commands.tag_commands import TagCreateCommand
 from prismic.application.session import PrismicSession
 from prismic.domain.media import MediaState
 

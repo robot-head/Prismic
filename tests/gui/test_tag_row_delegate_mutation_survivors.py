@@ -8,16 +8,7 @@ from PySide6.QtGui import QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import QListView, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 from pytestqt.qtbot import QtBot
 
-from prismic.domain.tag import Tag
-from prismic.ui.tag_model import (
-    CheckedRole,
-    CheckedSlotRole,
-    TagIdRole,
-    TagListModel,
-    UncheckedSlotRole,
-)
-from prismic.ui.tag_row_delegate import TagRowDelegate
-from tests.gui._mutation_helpers import RecordingCalls, assert_editor_geometry
+from tests.gui import _tag_model_support as model_support
 
 
 class _Font:
@@ -41,7 +32,7 @@ class _Metrics:
         return text
 
 
-class _Painter(RecordingCalls):
+class _Painter(model_support.RecordingCalls):
     def __init__(self) -> None:
         super().__init__()
         self.metrics = _Metrics()
@@ -54,20 +45,22 @@ class _Painter(RecordingCalls):
         return self.font_value
 
 
-def _delegate(qtbot: QtBot, *, show_shortcuts: bool = False) -> tuple[QListView, TagRowDelegate]:
+def _delegate(
+    qtbot: QtBot, *, show_shortcuts: bool = False
+) -> tuple[QListView, model_support.TagRowDelegate]:
     view = QListView()
     qtbot.addWidget(view)
-    return view, TagRowDelegate(view, view, show_shortcuts=show_shortcuts)
+    return view, model_support.TagRowDelegate(view, view, show_shortcuts=show_shortcuts)
 
 
-def _model() -> TagListModel:
-    model = TagListModel()
+def _model() -> model_support.TagListModel:
+    model = model_support.TagListModel()
     model.set_tags(
         [
-            Tag(id=1, name="first"),
-            Tag(id=2, name="second"),
-            Tag(id=3, name="third"),
-            Tag(id=4, name="fourth"),
+            model_support.Tag(id=1, name="first"),
+            model_support.Tag(id=2, name="second"),
+            model_support.Tag(id=3, name="third"),
+            model_support.Tag(id=4, name="fourth"),
         ],
         frozenset({1, 3}),
     )
@@ -113,8 +106,8 @@ def test_shortcut_paint_uses_checked_or_unchecked_slots_and_elides_long_labels(
     option = _paint_option(QRect(0, 0, 240, 32))
 
     checked_index = model.index(2, 0)
-    assert checked_index.data(CheckedRole) is True
-    assert checked_index.data(CheckedSlotRole) == 1
+    assert checked_index.data(model_support.CheckedRole) is True
+    assert checked_index.data(model_support.CheckedSlotRole) == 1
     delegate.set_show_checked_shortcuts(True)
     delegate.paint(painter, option, checked_index)
 
@@ -127,7 +120,7 @@ def test_shortcut_paint_uses_checked_or_unchecked_slots_and_elides_long_labels(
     assert painter.font_value.bold is True
 
     unchecked_index = model.index(3, 0)
-    assert unchecked_index.data(UncheckedSlotRole) == 1
+    assert unchecked_index.data(model_support.UncheckedSlotRole) == 1
     delegate.set_show_checked_shortcuts(False)
     painter = _Painter()
     delegate.paint(painter, option, unchecked_index)
@@ -199,13 +192,17 @@ def test_editor_event_rejects_bad_ids_and_non_release_events(qtbot: QtBot) -> No
 
     class InvalidIndex:
         def data(self, role: int) -> object:
-            return "not an integer" if role == TagIdRole else None
+            return "not an integer" if role == model_support.TagIdRole else None
 
     toggled: list[int] = []
     delegate.toggle_requested.connect(toggled.append)
-    assert delegate.editorEvent(release, TagListModel(), option, InvalidIndex()) is False  # type: ignore[arg-type]
     assert (
-        delegate.editorEvent(QEvent(QEvent.Type.KeyPress), TagListModel(), option, QModelIndex())
+        delegate.editorEvent(release, model_support.TagListModel(), option, InvalidIndex()) is False
+    )  # type: ignore[arg-type]
+    assert (
+        delegate.editorEvent(
+            QEvent(QEvent.Type.KeyPress), model_support.TagListModel(), option, QModelIndex()
+        )
         is False
     )
     assert toggled == []
@@ -238,4 +235,4 @@ def test_inline_editor_geometry_uses_the_row_inset_and_padding(qtbot: QtBot) -> 
     _view, delegate = _delegate(qtbot)
     option = _paint_option(QRect(12, 25, 241, 39))
 
-    assert_editor_geometry(delegate, option, QRect(42, 27, 202, 35))
+    model_support.assert_editor_geometry(delegate, option, QRect(42, 27, 202, 35))

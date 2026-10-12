@@ -274,15 +274,20 @@ def test_toggling_fullscreen_off_leaves_it(qtbot: QtBot, window: MainWindow) -> 
     assert not window.isFullScreen()
 
 
-def test_leaving_fullscreen_restores_a_maximized_window_to_maximized(
-    qtbot: QtBot, window: MainWindow
+@pytest.mark.parametrize("was_maximized", [True, False], ids=["maximized", "normal"])
+def test_leaving_fullscreen_restores_the_previous_window_state(
+    qtbot: QtBot, window: MainWindow, was_maximized: bool
 ) -> None:
-    """`showFullScreen()` then `showNormal()` alone drops back to plain
-    windowed, silently un-maximizing a window that was maximized before
-    -- not "restore ... to the size it was before" when "before" was
-    maximized. `_pre_fullscreen_state` is what closes that gap."""
-    window.showMaximized()
-    qtbot.waitUntil(lambda: window.isMaximized(), timeout=1000)
+    if was_maximized:
+        window.showMaximized()
+        qtbot.waitUntil(lambda: window.isMaximized(), timeout=1000)
+    else:
+        window.showNormal()
+        qtbot.waitUntil(
+            lambda: not window.isMaximized() and not window.isFullScreen(), timeout=1000
+        )
+        window.setGeometry(50, 60, 700, 500)
+        original_geometry = window.geometry()
 
     qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
     assert window.isFullScreen()
@@ -290,25 +295,9 @@ def test_leaving_fullscreen_restores_a_maximized_window_to_maximized(
     qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
 
     assert not window.isFullScreen()
-    assert window.isMaximized()
-
-
-def test_leaving_fullscreen_restores_a_normal_window_to_its_own_geometry(
-    qtbot: QtBot, window: MainWindow
-) -> None:
-    window.showNormal()
-    qtbot.waitUntil(lambda: not window.isMaximized() and not window.isFullScreen(), timeout=1000)
-    window.setGeometry(50, 60, 700, 500)
-    original_geometry = window.geometry()
-
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-    assert window.isFullScreen()
-
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-
-    assert not window.isFullScreen()
-    assert not window.isMaximized()
-    assert window.geometry() == original_geometry
+    assert window.isMaximized() is was_maximized
+    if not was_maximized:
+        assert window.geometry() == original_geometry
 
 
 def test_any_key_exits_fullscreen(qtbot: QtBot, window: MainWindow) -> None:

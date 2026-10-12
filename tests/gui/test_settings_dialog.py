@@ -59,8 +59,23 @@ def capture_key(
     dialog: SettingsDialog,
     key: Qt.Key,
     modifiers: Qt.KeyboardModifier,
-) -> None:
-    qtbot.keyClick(start_capture(qtbot, dialog), key, modifiers)
+) -> KeyCaptureButton:
+    button = start_capture(qtbot, dialog)
+    qtbot.keyClick(button, key, modifiers)
+    return button
+
+
+def _key_release(key: Qt.Key, *, auto_repeat: bool = False, ignored: bool = False) -> QKeyEvent:
+    event = QKeyEvent(
+        QEvent.Type.KeyRelease,
+        key,
+        Qt.KeyboardModifier.NoModifier,
+        "",
+        auto_repeat,
+    )
+    if ignored:
+        event.ignore()
+    return event
 
 
 def accept_all(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -174,9 +189,7 @@ def test_clicking_the_key_box_starts_capturing(qtbot: QtBot, dialog: SettingsDia
 def test_pressing_a_key_while_capturing_rebinds_the_shortcut(
     qtbot: QtBot, dialog: SettingsDialog, bindings: ShortcutBindings
 ) -> None:
-    button = start_capture(qtbot, dialog)
-
-    qtbot.keyClick(button, Qt.Key.Key_F5)
+    button = capture_key(qtbot, dialog, Qt.Key.Key_F5, Qt.KeyboardModifier.NoModifier)
 
     assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "F5"
     assert not button.is_capturing
@@ -186,10 +199,9 @@ def test_pressing_a_key_while_capturing_rebinds_the_shortcut(
 def test_capturing_records_the_modifiers_too(
     qtbot: QtBot, dialog: SettingsDialog, bindings: ShortcutBindings
 ) -> None:
-    button = start_capture(qtbot, dialog)
-
-    qtbot.keyClick(
-        button,
+    capture_key(
+        qtbot,
+        dialog,
         Qt.Key.Key_K,
         Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier,
     )
@@ -227,9 +239,7 @@ def test_closing_the_window_mid_capture_releases_the_keyboard(
 def test_escape_cancels_a_capture_without_changing_anything(
     qtbot: QtBot, dialog: SettingsDialog, bindings: ShortcutBindings
 ) -> None:
-    button = start_capture(qtbot, dialog)
-
-    qtbot.keyClick(button, Qt.Key.Key_Escape)
+    button = capture_key(qtbot, dialog, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
 
     assert not button.is_capturing
     assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
@@ -277,9 +287,7 @@ def test_tapping_a_modifier_alone_binds_the_modifier(
     """Pressed and released with nothing in between, a modifier is a
     binding in its own right -- which is how the numbering swap gets its
     default of plain Ctrl through the ordinary capture box."""
-    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
-    assert isinstance(button, KeyCaptureButton)
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    button = start_capture(qtbot, dialog)
 
     qtbot.keyPress(button, Qt.Key.Key_Alt)
     qtbot.keyRelease(button, Qt.Key.Key_Alt)
@@ -293,9 +301,7 @@ def test_a_modifier_released_after_a_combination_is_not_a_tap(
 ) -> None:
     """Ctrl+K is one binding, not Ctrl+K followed by a stray Ctrl tap --
     the capture has to already be finished by the time Ctrl comes up."""
-    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
-    assert isinstance(button, KeyCaptureButton)
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    button = start_capture(qtbot, dialog)
 
     # Raw presses, in the order a real keyboard produces them. Passing
     # `modifiers=` to qtbot instead would make QTest synthesize its own
@@ -314,9 +320,7 @@ def test_two_modifiers_held_together_are_not_a_tap(
 ) -> None:
     """Ctrl held while Shift goes down isn't either one tapped alone, so
     the box keeps waiting rather than guessing which was meant."""
-    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
-    assert isinstance(button, KeyCaptureButton)
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    button = start_capture(qtbot, dialog)
 
     qtbot.keyPress(button, Qt.Key.Key_Control)
     qtbot.keyPress(button, Qt.Key.Key_Shift)
@@ -340,8 +344,9 @@ def test_clear_unbinds_the_shortcut(
     assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == ""
 
 
-def test_reset_is_only_offered_once_a_shortcut_has_been_changed(
-    qtbot: QtBot, dialog: SettingsDialog
+@pytest.mark.parametrize("reset", [False, True], ids=["clear-only", "clear-then-reset"])
+def test_clear_enables_reset_and_reset_restores_the_default(
+    qtbot: QtBot, dialog: SettingsDialog, bindings: ShortcutBindings, reset: bool
 ) -> None:
     row = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)
     assert not row._reset_button.isEnabled()
@@ -349,17 +354,10 @@ def test_reset_is_only_offered_once_a_shortcut_has_been_changed(
     qtbot.mouseClick(row._clear_button, Qt.MouseButton.LeftButton)
 
     assert row._reset_button.isEnabled()
-
-
-def test_reset_puts_a_shortcut_back(
-    qtbot: QtBot, dialog: SettingsDialog, bindings: ShortcutBindings
-) -> None:
-    row = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)
-    qtbot.mouseClick(row._clear_button, Qt.MouseButton.LeftButton)
-
-    qtbot.mouseClick(row._reset_button, Qt.MouseButton.LeftButton)
-
-    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
+    assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == ""
+    if reset:
+        qtbot.mouseClick(row._reset_button, Qt.MouseButton.LeftButton)
+        assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
 
 
 def test_restore_all_defaults_resets_every_shortcut(
@@ -567,8 +565,7 @@ def test_unrelated_modifier_release_does_not_bind_the_pending_modifier(
 ) -> None:
     button = start_capture(qtbot, dialog)
     button._pending_modifier = int(Qt.Key.Key_Control)
-    release = QKeyEvent(QEvent.Type.KeyRelease, unrelated_key, Qt.KeyboardModifier.NoModifier)
-    release.ignore()
+    release = _key_release(unrelated_key, ignored=True)
 
     assert button.event(release)
     assert button.is_capturing
@@ -579,8 +576,7 @@ def test_release_without_a_pending_modifier_is_consumed_without_binding(
     qtbot: QtBot, dialog: SettingsDialog, bindings: ShortcutBindings
 ) -> None:
     button = start_capture(qtbot, dialog)
-    release = QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_F5, Qt.KeyboardModifier.NoModifier)
-    release.ignore()
+    release = _key_release(Qt.Key.Key_F5, ignored=True)
 
     assert button.event(release)
     assert button.is_capturing
@@ -592,13 +588,7 @@ def test_auto_repeat_modifier_release_does_not_finish_capture(
 ) -> None:
     button = start_capture(qtbot, dialog)
     button._pending_modifier = int(Qt.Key.Key_Control)
-    event = QKeyEvent(
-        QEvent.Type.KeyRelease,
-        Qt.Key.Key_Control,
-        Qt.KeyboardModifier.NoModifier,
-        "",
-        True,
-    )
+    event = _key_release(Qt.Key.Key_Control, auto_repeat=True)
 
     assert button.event(event)
     assert button.is_capturing

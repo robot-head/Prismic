@@ -11,6 +11,7 @@ from __future__ import annotations
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QPersistentModelIndex, Qt
 
 from prismic.domain.media import Media
+from prismic.ui._model_utils import find_row_by_id, top_level_row_count
 
 _Index = QModelIndex | QPersistentModelIndex
 
@@ -31,15 +32,10 @@ class ResultListModel(QAbstractListModel):
         return self._media[row]
 
     def row_for_media_id(self, media_id: int) -> int | None:
-        for row, media in enumerate(self._media):
-            if media.id == media_id:
-                return row
-        return None
+        return find_row_by_id(self._media, media_id)
 
     def rowCount(self, parent: _Index | None = None) -> int:
-        if parent is not None and parent.isValid():
-            return 0
-        return len(self._media)
+        return top_level_row_count(parent, len(self._media))
 
     def data(self, index: _Index, role: int = Qt.ItemDataRole.DisplayRole) -> object:
         if not index.isValid() or not (0 <= index.row() < len(self._media)):

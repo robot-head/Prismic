@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QEvent, QMargins, QPointF, Qt
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtCore import QEvent, QMargins, Qt
 from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton
 from pytestqt.qtbot import QtBot
 
 from prismic.ui.frameless_dialog import MessageDialog, TitleBar
+from tests.gui._mutation_helpers import mouse_event
 
 
 def test_message_dialog_keeps_its_layout_and_minimum_width_contract(qtbot: QtBot) -> None:
@@ -75,15 +75,7 @@ def test_title_bar_leaves_a_left_press_unhandled_when_system_move_is_unavailable
             return handle
 
     monkeypatch.setattr(title_bar, "window", lambda: WindowStub())
-    event = QMouseEvent(
-        QEvent.Type.MouseButtonPress,
-        QPointF(1, 1),
-        QPointF(1, 1),
-        QPointF(1, 1),
-        Qt.MouseButton.LeftButton,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
+    event = mouse_event(QEvent.Type.MouseButtonPress, Qt.MouseButton.LeftButton)
     event.ignore()
 
     title_bar.mousePressEvent(event)
@@ -95,15 +87,7 @@ def test_title_bar_leaves_a_left_press_unhandled_when_system_move_is_unavailable
 def test_title_bar_swallows_double_clicks(qtbot: QtBot) -> None:
     title_bar = TitleBar("Title")
     qtbot.addWidget(title_bar)
-    event = QMouseEvent(
-        QEvent.Type.MouseButtonDblClick,
-        QPointF(1, 1),
-        QPointF(1, 1),
-        QPointF(1, 1),
-        Qt.MouseButton.LeftButton,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
+    event = mouse_event(QEvent.Type.MouseButtonDblClick, Qt.MouseButton.LeftButton)
     event.ignore()
 
     title_bar.mouseDoubleClickEvent(event)

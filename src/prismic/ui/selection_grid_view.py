@@ -31,18 +31,15 @@ when the cell actually grew past what's cached.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPaintEvent
 from PySide6.QtWidgets import QWidget
 
-from prismic.application.worker_pool import WorkerPool
-from prismic.media.formats import SUPPORTED_VIDEO_EXTENSIONS
 from prismic.ui import theme
 from prismic.ui._thumbnail_badge import paint_play_badge
-from prismic.ui.thumbnail_provider import ThumbnailProvider
+from prismic.ui.thumbnail_services import ThumbnailServices
 
 _MARGIN = 12
 _SPACING = 6
@@ -60,17 +57,15 @@ don't care about sizing still have a sane value."""
 class SelectionGridView(QWidget):
     def __init__(
         self,
-        provider: ThumbnailProvider,
-        worker_pool: Callable[[], WorkerPool | None],
+        thumbnails: ThumbnailServices,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("selectionGrid")
-        self._provider = provider
-        self._worker_pool = worker_pool
+        self._thumbnails = thumbnails
         self._items: list[tuple[int, Path]] = []
-        self._provider.thumbnail_ready.connect(self._on_thumbnail_event)
-        self._provider.decode_failed.connect(self._on_thumbnail_event)
+        self._thumbnails.provider.thumbnail_ready.connect(self._on_thumbnail_event)
+        self._thumbnails.provider.decode_failed.connect(self._on_thumbnail_event)
 
     def set_items(self, items: list[tuple[int, Path]]) -> None:
         """`items` is (media_id, absolute_path) pairs, in display order."""
@@ -105,8 +100,8 @@ class SelectionGridView(QWidget):
         painter.save()
         painter.setClipPath(clip)
 
-        pixmap = self._provider.get(media_id)
-        is_video = path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS
+        pixmap = self._thumbnails.provider.get(media_id)
+        is_video = self._thumbnails.is_video(path)
 
         if pixmap is not None:
             ratio = self.devicePixelRatioF()
@@ -134,27 +129,19 @@ class SelectionGridView(QWidget):
 
         if is_video:
             paint_play_badge(painter, rect, size_fraction=0.16)
-        elif not self._provider.has_failed(media_id):
+        elif not self._thumbnails.provider.has_failed(media_id):
             # Requested every paint, not just when `pixmap is None`: a cell
             # that already has a thumbnail may still be under-resolution
             # for its *current* size (the window grew, or the selection
             # shrank to fewer, larger cells) -- `ThumbnailProvider.request`
             # is a no-op once the cached decode already meets this size.
-            self._request_thumbnail(media_id, path, self._required_dimension(rect))
+            self._thumbnails.request(media_id, path, self._required_dimension(rect))
 
         painter.restore()
 
     def _required_dimension(self, rect: QRectF) -> int:
         ratio = self.devicePixelRatioF()
         return max(1, math.ceil(max(rect.width(), rect.height()) * ratio))
-
-    def _request_thumbnail(self, media_id: int, path: Path, dimension: int) -> None:
-        if path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
-            return
-        pool = self._worker_pool()
-        if pool is None:
-            return
-        self._provider.request(media_id, path, pool, dimension)
 
 
 def _best_grid(count: int, width: int, height: int) -> tuple[int, float, float]:

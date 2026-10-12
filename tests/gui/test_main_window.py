@@ -8,7 +8,7 @@ from prismic.application.commands.mapping_commands import MappingAddCommand
 from prismic.domain.tag import Tag
 from prismic.ui.column_splitter import _ColumnSplitterHandle
 from prismic.ui.main_window import MainWindow
-from tests.gui.helpers import open_and_wait
+from tests.gui.helpers import open_and_wait, refresh_and_hover_item_tag
 
 
 def _broken_collection(tmp_path: Path) -> Path:
@@ -36,6 +36,27 @@ def _create_tag_on_current_item(window: MainWindow, name: str) -> tuple[Tag, int
     session.state.current_item = current_id
     window._refresh_all()
     return tag, current_id
+
+
+def _select_first_item(window: MainWindow) -> int:
+    session = window.session
+    assert session is not None
+    current_id = session.state.result_set[0]
+    session.state.current_item = current_id
+    window._refresh_all()
+    return current_id
+
+
+def _open_show_and_wait(qtbot: QtBot, window: MainWindow, collection_dir: Path) -> None:
+    open_and_wait(qtbot, window, collection_dir)
+    window.show()
+    qtbot.waitExposed(window)
+
+
+def _assert_no_hover_hint(window: MainWindow, row: int = 10) -> None:
+    window._on_item_tag_hover(row)
+    assert window._hover_bar._key_labels == []
+    assert window._hover_bar._text_label.text() == ""
 
 
 def _create_tags_on_first_item(
@@ -154,9 +175,7 @@ def test_scan_progress_bar_is_hidden_once_the_initial_scan_completes(
 def test_rescanning_shows_progress_that_reaches_completion(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    window.show()
-    qtbot.waitExposed(window)
+    _open_show_and_wait(qtbot, window, collection_dir)
 
     # Nothing changed on disk, so this rescan has the same 2 files -- and
     # the previous scan (opening the collection) also saw 2, so this is the
@@ -193,25 +212,23 @@ def test_create_tag_via_the_ui_appears_in_the_filter_panel(
     assert window.filter_panel.model.rowCount() == 1
 
 
-def test_rename_tag_via_the_ui(qtbot: QtBot, window: MainWindow, collection_dir: Path) -> None:
+@pytest.mark.parametrize("delete", [False, True], ids=["rename", "delete"])
+def test_renaming_or_deleting_a_tag_via_the_ui(
+    qtbot: QtBot, window: MainWindow, collection_dir: Path, delete: bool
+) -> None:
     open_and_wait(qtbot, window, collection_dir)
     window._on_tag_create("vacation")
     tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
 
-    window._on_tag_rename(tag.id, "travel")
+    if delete:
+        window._on_tag_delete(tag.id)
+        expected_names = []
+    else:
+        window._on_tag_rename(tag.id, "travel")
+        expected_names = ["travel"]
 
-    assert window.session.tags.get(tag.id).name == "travel"  # type: ignore[union-attr]
-
-
-def test_delete_tag_via_the_ui(qtbot: QtBot, window: MainWindow, collection_dir: Path) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    window._on_tag_create("vacation")
-    tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
-
-    window._on_tag_delete(tag.id)
-
-    assert window.session.tags.list_all() == []  # type: ignore[union-attr]
-    assert window.filter_panel.model.rowCount() == 0
+    assert [tag.name for tag in window.session.tags.list_all()] == expected_names  # type: ignore[union-attr]
+    assert window.filter_panel.model.rowCount() == len(expected_names)
 
 
 def test_filter_selection_narrows_the_result_view(
@@ -240,9 +257,7 @@ def test_item_create_and_check_creates_the_tag_and_maps_it_in_one_step(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
     open_and_wait(qtbot, window, collection_dir)
-    current_id = window.session.state.result_set[0]  # type: ignore[union-attr]
-    window.session.state.current_item = current_id  # type: ignore[union-attr]
-    window._refresh_all()
+    current_id = _select_first_item(window)
 
     window._on_item_create_and_check("vacation")
 
@@ -277,9 +292,7 @@ def test_item_create_and_check_with_an_existing_exact_name_reuses_it_silently(
     picking a filtered row instead). That's expected, not a mistake, so it
     must apply the existing tag with no duplicate-name warning dialog."""
     open_and_wait(qtbot, window, collection_dir)
-    current_id = window.session.state.result_set[0]  # type: ignore[union-attr]
-    window.session.state.current_item = current_id  # type: ignore[union-attr]
-    window._refresh_all()
+    current_id = _select_first_item(window)
     window._on_tag_create("vacation")
     existing = window.session.tags.list_all()[0]  # type: ignore[union-attr]
 
@@ -337,9 +350,7 @@ def test_in_viewer_tag_toggle_maps_the_current_item(
 def test_item_tag_toggle_clears_its_search_box_without_losing_focus(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    window.show()
-    qtbot.waitExposed(window)
+    _open_show_and_wait(qtbot, window, collection_dir)
     tag, _current_id = _create_tag_on_current_item(window, "vacation")
     window.item_tag_panel.search_box.setText("vac")
     window.item_tag_panel.search_box.setFocus()
@@ -354,9 +365,7 @@ def test_item_tag_toggle_clears_its_search_box_without_losing_focus(
 def test_filter_toggle_clears_its_search_box_without_losing_focus(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    window.show()
-    qtbot.waitExposed(window)
+    _open_show_and_wait(qtbot, window, collection_dir)
     window._on_tag_create("vacation")
     tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
     window._refresh_all()
@@ -375,9 +384,7 @@ def test_item_tag_hover_shows_digit_hint_within_the_shortcut_group(
 ) -> None:
     open_and_wait(qtbot, window, collection_dir)
     window._on_tag_create("vacation")
-    window._refresh_all()
-
-    window._on_item_tag_hover(0)
+    refresh_and_hover_item_tag(window, 0)
 
     assert [label.text() for label in window._hover_bar._key_labels] == ["1"]
     assert window._hover_bar._text_label.text() == 'Toggle "vacation" on the current item'
@@ -398,10 +405,7 @@ def test_item_tag_hover_past_the_shortcut_group_in_its_own_active_group_clears(
         window._on_tag_create(f"tag{i:02d}")
     window._refresh_all()
 
-    window._on_item_tag_hover(10)  # 11th row -- past the 0..9 shortcut group
-
-    assert window._hover_bar._key_labels == []
-    assert window._hover_bar._text_label.text() == ""
+    _assert_no_hover_hint(window)  # 11th row -- past the 0..9 shortcut group
 
 
 def test_item_tag_hover_over_selected_group_names_selected_tags(
@@ -445,10 +449,7 @@ def test_item_tag_hover_past_the_shortcut_group_mirrors_for_selected_mode(
     window._tag_shortcut_mode_action.setChecked(True)  # number the selected group
     window._refresh_all()
 
-    window._on_item_tag_hover(10)  # 11th row -- past the 0..9 shortcut group
-
-    assert window._hover_bar._key_labels == []
-    assert window._hover_bar._text_label.text() == ""
+    _assert_no_hover_hint(window)  # 11th row -- past the 0..9 shortcut group
 
 
 def test_recently_clicked_tag_floats_to_the_top_of_both_panels(
@@ -472,6 +473,18 @@ def test_recently_clicked_tag_floats_to_the_top_of_both_panels(
     assert window.item_tag_panel.model.tag_at(0).name == "beta"
 
 
+def _create_tags_with_gamma_then_alpha_checked(
+    qtbot: QtBot, window: MainWindow, collection_dir: Path
+) -> dict[str, int]:
+    open_and_wait(qtbot, window, collection_dir)
+    _first_id, _second_id, tags_by_name = _create_tags_on_first_item(
+        window, ("alpha", "beta", "gamma")
+    )
+    window._on_item_tag_toggle(tags_by_name["gamma"])
+    window._on_item_tag_toggle(tags_by_name["alpha"])
+    return tags_by_name
+
+
 def test_checking_a_tag_appends_it_to_the_bottom_of_the_checked_group(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
@@ -479,13 +492,7 @@ def test_checking_a_tag_appends_it_to_the_bottom_of_the_checked_group(
     popularity/recency algorithm would in fact put alpha first (it's the
     more recently clicked one), so this only passes if checking really is
     appending to a stable order rather than re-running that algorithm."""
-    open_and_wait(qtbot, window, collection_dir)
-    _first_id, _second_id, tags_by_name = _create_tags_on_first_item(
-        window, ("alpha", "beta", "gamma")
-    )
-
-    window._on_item_tag_toggle(tags_by_name["gamma"])
-    window._on_item_tag_toggle(tags_by_name["alpha"])
+    _create_tags_with_gamma_then_alpha_checked(qtbot, window, collection_dir)
 
     assert window.item_tag_panel.model.tag_at(0).name == "gamma"
     assert window.item_tag_panel.model.tag_at(1).name == "alpha"
@@ -494,13 +501,7 @@ def test_checking_a_tag_appends_it_to_the_bottom_of_the_checked_group(
 def test_unchecking_a_tag_drops_it_without_reordering_the_rest(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    _first_id, _second_id, tags_by_name = _create_tags_on_first_item(
-        window, ("alpha", "beta", "gamma")
-    )
-
-    window._on_item_tag_toggle(tags_by_name["gamma"])
-    window._on_item_tag_toggle(tags_by_name["alpha"])
+    tags_by_name = _create_tags_with_gamma_then_alpha_checked(qtbot, window, collection_dir)
     window._on_item_tag_toggle(tags_by_name["beta"])
     # stable order is now gamma, alpha, beta -- uncheck the middle one
     window._on_item_tag_toggle(tags_by_name["alpha"])

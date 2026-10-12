@@ -11,23 +11,25 @@ from prismic.ui.image_view import ImageView
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "media"
 
 
-def test_set_image_fits_to_window_at_zoom_one(qtbot: QtBot) -> None:
+def _loaded_view(qtbot: QtBot, *, size: tuple[int, int] | None = None) -> ImageView:
     view = ImageView()
+    if size is not None:
+        view.resize(*size)
     qtbot.addWidget(view)
     image = load_image(FIXTURES_DIR / "supported_image.png")
     assert not isinstance(image, ImageLoadError)
-
     view.set_image(image)
+    return view
+
+
+def test_set_image_fits_to_window_at_zoom_one(qtbot: QtBot) -> None:
+    view = _loaded_view(qtbot)
 
     assert view.zoom == 1.0
 
 
 def test_zoom_in_increases_zoom_level(qtbot: QtBot) -> None:
-    view = ImageView()
-    qtbot.addWidget(view)
-    image = load_image(FIXTURES_DIR / "supported_image.png")
-    assert not isinstance(image, ImageLoadError)
-    view.set_image(image)
+    view = _loaded_view(qtbot)
 
     view.zoom_in()
 
@@ -35,11 +37,7 @@ def test_zoom_in_increases_zoom_level(qtbot: QtBot) -> None:
 
 
 def test_zoom_out_decreases_zoom_level(qtbot: QtBot) -> None:
-    view = ImageView()
-    qtbot.addWidget(view)
-    image = load_image(FIXTURES_DIR / "supported_image.png")
-    assert not isinstance(image, ImageLoadError)
-    view.set_image(image)
+    view = _loaded_view(qtbot)
 
     view.zoom_out()
 
@@ -54,11 +52,7 @@ def test_zoom_out_decreases_zoom_level(qtbot: QtBot) -> None:
 def test_wheel_event_zooms_by_delta_direction(
     qtbot: QtBot, delta: int, expected_zoom: float
 ) -> None:
-    view = ImageView()
-    qtbot.addWidget(view)
-    image = load_image(FIXTURES_DIR / "supported_image.png")
-    assert not isinstance(image, ImageLoadError)
-    view.set_image(image)
+    view = _loaded_view(qtbot)
 
     event = QWheelEvent(
         QPoint(10, 10).toPointF(),
@@ -76,12 +70,7 @@ def test_wheel_event_zooms_by_delta_direction(
 
 
 def test_double_click_zooms_in_then_fits_back(qtbot: QtBot) -> None:
-    view = ImageView()
-    qtbot.addWidget(view)
-    view.resize(200, 200)
-    image = load_image(FIXTURES_DIR / "supported_image.png")
-    assert not isinstance(image, ImageLoadError)
-    view.set_image(image)
+    view = _loaded_view(qtbot, size=(200, 200))
     assert view.zoom == 1.0
 
     qtbot.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton)

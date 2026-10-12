@@ -7,6 +7,7 @@ from pytestqt.qtbot import QtBot
 from prismic.application.worker_pool import WorkerPool
 from prismic.ui.selection_grid_view import SelectionGridView, _best_grid
 from prismic.ui.thumbnail_provider import ThumbnailProvider
+from prismic.ui.thumbnail_services import ThumbnailServices
 
 
 def test_a_single_cell_fills_the_whole_available_area() -> None:
@@ -51,7 +52,7 @@ def test_grid_view_renders_without_crashing_and_requests_missing_thumbnails(
 
     provider = ThumbnailProvider()
     pool = WorkerPool()
-    view = SelectionGridView(provider, lambda: pool)
+    view = SelectionGridView(ThumbnailServices(provider, lambda: pool))
     qtbot.addWidget(view)
     view.resize(400, 300)
 
@@ -90,7 +91,7 @@ def test_a_non_matching_aspect_ratio_is_letterboxed_not_cropped(qtbot: QtBot) ->
     # confirm nothing crashes along that path.
     provider = ThumbnailProvider()
     provider._cache[1] = source
-    view = SelectionGridView(provider, lambda: None)
+    view = SelectionGridView(ThumbnailServices(provider, lambda: None))
     qtbot.addWidget(view)
     view.resize(300, 300)
     view.set_items([(1, Path("a.jpg"))])
@@ -98,9 +99,7 @@ def test_a_non_matching_aspect_ratio_is_letterboxed_not_cropped(qtbot: QtBot) ->
     qtbot.waitExposed(view)
 
 
-def test_the_requested_dimension_tracks_the_actual_cell_size(
-    qtbot: QtBot, tmp_path: Path
-) -> None:
+def test_the_requested_dimension_tracks_the_actual_cell_size(qtbot: QtBot, tmp_path: Path) -> None:
     """A cell's decode request must scale with how big the cell actually
     is on screen -- a fixed decode cap either blurs a large cell (a small
     selection in a big window) or wastes decode time on a small one (a
@@ -120,7 +119,7 @@ def test_the_requested_dimension_tracks_the_actual_cell_size(
     provider.request = spy_request  # type: ignore[method-assign]
 
     pool = WorkerPool()
-    view = SelectionGridView(provider, lambda: pool)
+    view = SelectionGridView(ThumbnailServices(provider, lambda: pool))
     qtbot.addWidget(view)
     view.resize(1000, 1000)  # a single item gets a large cell
     view.set_items([(1, tmp_path / "a.jpg")])

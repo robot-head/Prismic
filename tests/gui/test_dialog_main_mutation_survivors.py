@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint, QPointF, QSize, Qt
-from PySide6.QtGui import QMouseEvent, QPainter
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QMessageBox, QWidget
 from pytestqt.qtbot import QtBot
 
@@ -14,7 +14,8 @@ from prismic.persistence.preferences import PreferencesStore
 from prismic.ui.frameless_dialog import FramelessDialog, MessageDialog, TitleBar
 from prismic.ui.main_window import MainWindow
 from prismic.ui.settings_dialog import KeyCaptureButton, ShortcutsPanel, ThresholdRow
-from tests.gui.helpers import open_and_wait
+from tests.gui._mutation_helpers import mouse_event
+from tests.gui.helpers import open_three_item_collection
 
 
 def test_parented_message_dialog_centers_over_parent_before_showing(qtbot: QtBot) -> None:
@@ -107,28 +108,12 @@ def test_title_bar_starts_a_system_move_only_for_a_left_press(
             return handle
 
     monkeypatch.setattr(title_bar, "window", lambda: WindowStub())
-    left_press = QMouseEvent(
-        QEvent.Type.MouseButtonPress,
-        QPointF(1, 1),
-        QPointF(1, 1),
-        QPointF(1, 1),
-        Qt.MouseButton.LeftButton,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
+    left_press = mouse_event(QEvent.Type.MouseButtonPress, Qt.MouseButton.LeftButton)
     title_bar.mousePressEvent(left_press)
     assert left_press.isAccepted()
     assert handle.calls == 1
 
-    right_press = QMouseEvent(
-        QEvent.Type.MouseButtonPress,
-        QPointF(1, 1),
-        QPointF(1, 1),
-        QPointF(1, 1),
-        Qt.MouseButton.RightButton,
-        Qt.MouseButton.RightButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
+    right_press = mouse_event(QEvent.Type.MouseButtonPress, Qt.MouseButton.RightButton)
     right_press.ignore()
     title_bar.mousePressEvent(right_press)
 
@@ -242,10 +227,7 @@ def test_thumbnail_preloading_follows_direction_and_stays_within_display_order(
     direction: int,
     neighbor_indexes: list[int],
 ) -> None:
-    (collection_dir / "c.png").write_bytes((collection_dir / "a.png").read_bytes())
-    open_and_wait(qtbot, window, collection_dir, expected_count=3)
-    session = window.session
-    assert session is not None
+    session = open_three_item_collection(qtbot, window, collection_dir)
     display_order = list(session.state.result_set)
     media_paths = {
         media.id: session.collection.root / media.relative_path
@@ -264,10 +246,7 @@ def test_thumbnail_preloading_follows_direction_and_stays_within_display_order(
 def test_multi_selection_grid_keeps_display_order_and_skips_unselected_items(
     qtbot: QtBot, window: MainWindow, collection_dir
 ) -> None:
-    (collection_dir / "c.png").write_bytes((collection_dir / "a.png").read_bytes())
-    open_and_wait(qtbot, window, collection_dir, expected_count=3)
-    session = window.session
-    assert session is not None
+    session = open_three_item_collection(qtbot, window, collection_dir)
     first, _middle, last = session.state.result_set
     session.state.current_item = first
     session.state.selected_items = frozenset({first, last})

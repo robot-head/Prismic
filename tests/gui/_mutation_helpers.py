@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import QModelIndex, QRect
+from PySide6.QtCore import QEvent, QModelIndex, QPointF, QRect, Qt
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QStyleOptionViewItem
 
 
@@ -33,3 +34,16 @@ def assert_editor_geometry(delegate: Any, option: QStyleOptionViewItem, expected
     editor = Editor()
     delegate.updateEditorGeometry(editor, option, QModelIndex())
     assert editor.geometry == expected
+
+
+def mouse_event(event_type: QEvent.Type, button: Qt.MouseButton) -> QMouseEvent:
+    point = QPointF(1, 1)
+    return QMouseEvent(
+        event_type,
+        point,
+        point,
+        point,
+        button,
+        button,
+        Qt.KeyboardModifier.NoModifier,
+    )

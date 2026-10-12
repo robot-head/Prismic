@@ -8,11 +8,15 @@ import prismic.media.loader as loader_module
 from prismic.media.loader import ImageLoader
 
 
+def _fresh_request() -> tuple[ImageLoader, int]:
+    loader = ImageLoader()
+    return loader, loader.begin_request()
+
+
 def test_load_returns_the_decoded_image_for_a_fresh_request(
     qtbot: QtBot, fixtures_dir: Path
 ) -> None:
-    loader = ImageLoader()
-    request_id = loader.begin_request()
+    loader, request_id = _fresh_request()
 
     result = loader.load(request_id, fixtures_dir / "supported_image.png")
 
@@ -26,8 +30,7 @@ def test_load_returns_the_decoded_image_for_a_fresh_request(
 def test_load_on_corrupt_content_returns_an_error_result_not_none(
     qtbot: QtBot, fixtures_dir: Path
 ) -> None:
-    loader = ImageLoader()
-    request_id = loader.begin_request()
+    loader, request_id = _fresh_request()
 
     result = loader.load(request_id, fixtures_dir / "corrupt_image.jpg")
 

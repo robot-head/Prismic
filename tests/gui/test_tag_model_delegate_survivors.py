@@ -6,19 +6,10 @@ from PySide6.QtWidgets import QListView, QStyle, QStyleOptionViewItem
 from pytestqt.qtbot import QtBot
 
 from prismic.application.input.shortcuts import QUICK_SELECT_SLOT_COUNT
-from prismic.domain.tag import Tag
-from prismic.ui.tag_model import (
-    CheckedRole,
-    CheckedSlotRole,
-    TagIdRole,
-    TagListModel,
-    UncheckedSlotRole,
-)
-from prismic.ui.tag_row_delegate import TagRowDelegate
-from tests.gui._mutation_helpers import RecordingCalls, assert_editor_geometry
+from tests.gui import _tag_model_support as model_support
 
 
-class _RecordingPainter(RecordingCalls):
+class _RecordingPainter(model_support.RecordingCalls):
     def __init__(self) -> None:
         super().__init__()
         self.elide_width: int | None = None
@@ -31,24 +22,27 @@ class _RecordingPainter(RecordingCalls):
         return text
 
 
-def _delegate(qtbot: QtBot) -> TagRowDelegate:
+def _delegate(qtbot: QtBot) -> model_support.TagRowDelegate:
     view = QListView()
     qtbot.addWidget(view)
-    return TagRowDelegate(view, view)
+    return model_support.TagRowDelegate(view, view)
 
 
 def test_tag_model_roles_keep_their_documented_qt_user_role_offsets() -> None:
     user_role = Qt.ItemDataRole.UserRole
 
-    assert TagIdRole == user_role + 1
-    assert CheckedRole == user_role + 2
-    assert UncheckedSlotRole == user_role + 3
-    assert CheckedSlotRole == user_role + 4
+    assert model_support.TagIdRole == user_role + 1
+    assert model_support.CheckedRole == user_role + 2
+    assert model_support.UncheckedSlotRole == user_role + 3
+    assert model_support.CheckedSlotRole == user_role + 4
 
 
 def test_tag_slots_are_group_relative_capped_and_reversible(qtbot: QtBot) -> None:
-    model = TagListModel()
-    tags = [Tag(id=row + 1, name=f"tag {row}") for row in range(QUICK_SELECT_SLOT_COUNT * 2 + 4)]
+    model = model_support.TagListModel()
+    tags = [
+        model_support.Tag(id=row + 1, name=f"tag {row}")
+        for row in range(QUICK_SELECT_SLOT_COUNT * 2 + 4)
+    ]
     selected_ids = frozenset(tag.id for row, tag in enumerate(tags) if row % 2 == 0)
     model.set_tags(tags, selected_ids)
 
@@ -65,11 +59,11 @@ def test_tag_slots_are_group_relative_capped_and_reversible(qtbot: QtBot) -> Non
         assert row is not None
         index = model.index(row, 0)
         is_checked = tag.id in selected_ids
-        assert index.data(CheckedRole) is is_checked
+        assert index.data(model_support.CheckedRole) is is_checked
         assert model.row_for_tag_id(EqualId(tag.id)) == row
 
         group_ids = checked_ids if is_checked else unchecked_ids
-        role = CheckedSlotRole if is_checked else UncheckedSlotRole
+        role = model_support.CheckedSlotRole if is_checked else model_support.UncheckedSlotRole
         expected_slot = len(group_ids) if len(group_ids) < QUICK_SELECT_SLOT_COUNT else None
         assert index.data(role) == expected_slot
         assert model.data(index, EqualRole(int(role))) == expected_slot
@@ -90,8 +84,10 @@ def test_tag_slots_are_group_relative_capped_and_reversible(qtbot: QtBot) -> Non
 
 
 def test_tag_model_data_rejects_a_valid_looking_index_past_the_last_row() -> None:
-    model = TagListModel()
-    model.set_tags([Tag(id=1, name="one"), Tag(id=2, name="two")], frozenset())
+    model = model_support.TagListModel()
+    model.set_tags(
+        [model_support.Tag(id=1, name="one"), model_support.Tag(id=2, name="two")], frozenset()
+    )
 
     class OutOfRangeIndex:
         def isValid(self) -> bool:
@@ -104,13 +100,13 @@ def test_tag_model_data_rejects_a_valid_looking_index_past_the_last_row() -> Non
             return self._row
 
     for row in (-1, model.rowCount()):
-        assert model.data(OutOfRangeIndex(row), TagIdRole) is None  # type: ignore[arg-type]
+        assert model.data(OutOfRangeIndex(row), model_support.TagIdRole) is None  # type: ignore[arg-type]
     assert model.rowCount(model.index(0, 0)) == 0
 
 
 def test_tag_model_flags_allow_editing_only_for_valid_rows(qtbot: QtBot) -> None:
-    model = TagListModel()
-    model.set_tags([Tag(id=1, name="one")], frozenset())
+    model = model_support.TagListModel()
+    model.set_tags([model_support.Tag(id=1, name="one")], frozenset())
     expected = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable
 
     assert model.flags(model.index(0, 0)) == expected
@@ -173,8 +169,8 @@ def test_paint_places_text_and_uses_left_vertical_alignment(
     qtbot: QtBot, hovered: bool, expected_text_rect: QRect
 ) -> None:
     delegate = _delegate(qtbot)
-    model = TagListModel()
-    model.set_tags([Tag(id=7, name="seven")], frozenset())
+    model = model_support.TagListModel()
+    model.set_tags([model_support.Tag(id=7, name="seven")], frozenset())
     option = QStyleOptionViewItem()
     option.rect = QRect(0, 0, 220, 32)
     option.state = QStyle.StateFlag.State_MouseOver if hovered else QStyle.StateFlag.State_None
@@ -196,7 +192,7 @@ def test_paint_ignores_indexes_with_non_integer_tag_ids(qtbot: QtBot) -> None:
 
     class InvalidTagIndex:
         def data(self, role: int) -> object:
-            return "not an id" if role == TagIdRole else "name"
+            return "not an id" if role == model_support.TagIdRole else "name"
 
     delegate.paint(painter, option, InvalidTagIndex())  # type: ignore[arg-type]
 
@@ -208,4 +204,4 @@ def test_inline_editor_geometry_starts_after_the_checkbox(qtbot: QtBot) -> None:
     option = QStyleOptionViewItem()
     option.rect = QRect(7, 11, 220, 34)
 
-    assert_editor_geometry(delegate, option, QRect(37, 13, 181, 30))
+    model_support.assert_editor_geometry(delegate, option, QRect(37, 13, 181, 30))

@@ -19,6 +19,12 @@ from prismic.ui.panel_toolbar import (
 )
 from prismic.ui.selection_grid_view import _MARGIN, _SPACING, SelectionGridView, _best_grid
 from prismic.ui.thumbnail_provider import ThumbnailProvider
+from prismic.ui.thumbnail_services import ThumbnailServices
+
+
+def _grid_view(provider: ThumbnailProvider | None = None) -> SelectionGridView:
+    thumbnail_provider = provider or ThumbnailProvider()
+    return SelectionGridView(ThumbnailServices(thumbnail_provider, lambda: None))
 
 
 class _Pen:
@@ -263,7 +269,7 @@ def test_grid_uses_the_candidate_with_the_largest_fitting_cell(
 
 
 def test_grid_thumbnail_events_refresh_only_a_visible_item(qtbot) -> None:
-    view = SelectionGridView(ThumbnailProvider(), lambda: None)
+    view = _grid_view()
     qtbot.addWidget(view)
     updates: list[bool] = []
     view.update = lambda: updates.append(True)  # type: ignore[method-assign]
@@ -283,7 +289,7 @@ def test_grid_thumbnail_events_refresh_only_a_visible_item(qtbot) -> None:
 def test_grid_paints_cells_in_display_order_with_row_and_column_spacing(
     qtbot, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    view = SelectionGridView(ThumbnailProvider(), lambda: None)
+    view = _grid_view()
     qtbot.addWidget(view)
     view.resize(400, 300)
     items = [(media_id, Path(f"{media_id}.jpg")) for media_id in range(1, 6)]
@@ -315,7 +321,7 @@ def test_grid_paints_cells_in_display_order_with_row_and_column_spacing(
 def test_grid_thumbnail_dimension_uses_ceil_and_never_falls_below_one(
     qtbot, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    view = SelectionGridView(ThumbnailProvider(), lambda: None)
+    view = _grid_view()
     qtbot.addWidget(view)
     monkeypatch.setattr(view, "devicePixelRatioF", lambda: 1.25)
 
@@ -335,7 +341,7 @@ def test_grid_centers_a_letterboxed_thumbnail_inside_its_cell(
 ) -> None:
     provider = ThumbnailProvider()
     provider._cache[7] = QPixmap(*source_size)
-    view = SelectionGridView(provider, lambda: None)
+    view = _grid_view(provider)
     qtbot.addWidget(view)
     monkeypatch.setattr(view, "devicePixelRatioF", lambda: 2.0)
     painter = _Painter()
@@ -352,7 +358,7 @@ def test_grid_centers_a_letterboxed_thumbnail_inside_its_cell(
 
 
 def test_grid_video_badge_uses_the_compact_grid_scale(qtbot, monkeypatch) -> None:
-    view = SelectionGridView(ThumbnailProvider(), lambda: None)
+    view = _grid_view()
     qtbot.addWidget(view)
     badge_calls: list[tuple[QRectF, float]] = []
     monkeypatch.setattr(

@@ -5,7 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from prismic.application.commands.base import Command, CommandContext
+from prismic.domain.tag import Tag
 from prismic.persistence.errors import UnknownTagError
+
+
+def _get_tag(context: CommandContext, tag_id: int) -> Tag:
+    tag = context.tags.get(tag_id)
+    if tag is None:
+        raise UnknownTagError(tag_id)
+    return tag
 
 
 @dataclass
@@ -29,9 +37,7 @@ class TagRenameCommand(Command):
     _previous_name: str | None = field(default=None, init=False, repr=False)
 
     def execute(self, context: CommandContext) -> None:
-        tag = context.tags.get(self.tag_id)
-        if tag is None:
-            raise UnknownTagError(self.tag_id)
+        tag = _get_tag(context, self.tag_id)
         self._previous_name = tag.name
         context.tags.rename(self.tag_id, self.new_name)
 
@@ -59,9 +65,7 @@ class TagDeleteCommand(Command):
     _was_selected: bool = field(default=False, init=False, repr=False)
 
     def execute(self, context: CommandContext) -> None:
-        tag = context.tags.get(self.tag_id)
-        if tag is None:
-            raise UnknownTagError(self.tag_id)
+        tag = _get_tag(context, self.tag_id)
         self._deleted_tag_name = tag.name
         self._mapped_media_ids = context.mappings.media_ids_for_tags([self.tag_id])
         self._was_selected = self.tag_id in context.state.selected_tag_ids

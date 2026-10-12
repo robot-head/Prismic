@@ -24,6 +24,8 @@ window raises (`_confirm_conflicts`, `_restore_defaults`).
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QFocusEvent, QHideEvent, QIntValidator, QKeyEvent
 from PySide6.QtWidgets import (
@@ -80,6 +82,13 @@ def _row_layout(
     layout.addWidget(editor)
     for widget in trailing_widgets:
         layout.addWidget(widget)
+
+
+def _reset_button(parent: QWidget, on_click: Callable[[], None]) -> QPushButton:
+    button = QPushButton("Reset", parent)
+    button.setObjectName("shortcutSmallButton")
+    button.clicked.connect(on_click)
+    return button
 
 
 def binding_display(binding: str, *, held: bool = False) -> str:
@@ -299,9 +308,7 @@ class ShortcutRow(QWidget):
         self._clear_button = QPushButton("Clear", self)
         self._clear_button.setObjectName("shortcutSmallButton")
         self._clear_button.clicked.connect(lambda: self._assign(""))
-        self._reset_button = QPushButton("Reset", self)
-        self._reset_button.setObjectName("shortcutSmallButton")
-        self._reset_button.clicked.connect(self._reset)
+        self._reset_button = _reset_button(self, self._reset)
 
         _row_layout(self, text_column, self._editor, self._clear_button, self._reset_button)
 
@@ -537,9 +544,7 @@ class ThresholdRow(QWidget):
         self._editor.editingFinished.connect(self._commit)
         percent_sign = QLabel("%", self)
 
-        self._reset_button = QPushButton("Reset", self)
-        self._reset_button.setObjectName("shortcutSmallButton")
-        self._reset_button.clicked.connect(self._reset)
+        self._reset_button = _reset_button(self, self._reset)
 
         _row_layout(self, text_column, self._editor, percent_sign, self._reset_button)
 
@@ -685,11 +690,7 @@ class SettingsDialog(FramelessDialog):
         body.addWidget(self.panel_list)
         body.addWidget(self._stack, 1)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self.title_bar)
-        layout.addLayout(body, 1)
+        layout = self._install_body_layout(body, stretch=1)
         footer_widget = QWidget(self)
         footer_widget.setObjectName("settingsFooter")
         footer_widget.setLayout(footer)

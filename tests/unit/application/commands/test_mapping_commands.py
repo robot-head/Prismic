@@ -41,25 +41,20 @@ def _mapping_remove_command(
     return media_id, tag.id, command
 
 
-def test_add_execute_creates_the_mapping(context: CommandContext, media: MediaRepository) -> None:
+@pytest.mark.parametrize("undo", [False, True], ids=["execute", "undo"])
+def test_add_execute_creates_the_mapping_and_undo_removes_it(
+    context: CommandContext, media: MediaRepository, undo: bool
+) -> None:
     media_id = _make_media(media)
     tag = context.tags.create("vacation")
     command = MappingAddCommand(media_id=media_id, tag_id=tag.id)
 
     command.execute(context)
+    if undo:
+        command.undo(context)
 
-    assert [t.id for t in context.mappings.tags_for_media(media_id)] == [tag.id]
-
-
-def test_add_undo_removes_the_mapping(context: CommandContext, media: MediaRepository) -> None:
-    media_id = _make_media(media)
-    tag = context.tags.create("vacation")
-    command = MappingAddCommand(media_id=media_id, tag_id=tag.id)
-    command.execute(context)
-
-    command.undo(context)
-
-    assert context.mappings.tags_for_media(media_id) == []
+    expected = [] if undo else [tag.id]
+    assert [mapped_tag.id for mapped_tag in context.mappings.tags_for_media(media_id)] == expected
 
 
 def test_add_with_unknown_media_raises(context: CommandContext) -> None:
@@ -119,18 +114,19 @@ def test_set_for_many_adding_only_touches_media_lacking_the_tag(
     assert {t.id for t in context.mappings.tags_for_media(lacks_it)} == {tag_id}
 
 
-def test_set_for_many_adding_undo_only_removes_what_it_actually_added(
-    context: CommandContext, media: MediaRepository
+@pytest.mark.parametrize("adding", [True, False], ids=["adding", "removing"])
+def test_set_for_many_undo_only_changes_entries_it_modified(
+    context: CommandContext, media: MediaRepository, adding: bool
 ) -> None:
     """The whole point of tracking only the ids that actually changed:
     undoing a bulk "add" must not strip the tag from a file that already
     had it going in -- that file was never this command's doing."""
-    has_it, lacks_it, tag_id, command = _bulk_mapping_command(context, media, adding=True)
+    has_it, lacks_it, tag_id, command = _bulk_mapping_command(context, media, adding=adding)
     command.execute(context)
 
     command.undo(context)
 
-    assert {t.id for t in context.mappings.tags_for_media(has_it)} == {tag_id}
+    assert {tag.id for tag in context.mappings.tags_for_media(has_it)} == {tag_id}
     assert context.mappings.tags_for_media(lacks_it) == []
 
 
@@ -142,18 +138,6 @@ def test_set_for_many_removing_only_touches_media_with_the_tag(
     command.execute(context)
 
     assert context.mappings.tags_for_media(has_it) == []
-    assert context.mappings.tags_for_media(lacks_it) == []
-
-
-def test_set_for_many_removing_undo_only_restores_what_it_actually_removed(
-    context: CommandContext, media: MediaRepository
-) -> None:
-    has_it, lacks_it, tag_id, command = _bulk_mapping_command(context, media, adding=False)
-    command.execute(context)
-
-    command.undo(context)
-
-    assert {t.id for t in context.mappings.tags_for_media(has_it)} == {tag_id}
     assert context.mappings.tags_for_media(lacks_it) == []
 
 

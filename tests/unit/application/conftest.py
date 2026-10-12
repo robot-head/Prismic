@@ -2,21 +2,19 @@ import sqlite3
 
 import pytest
 
-from prismic.persistence.repositories.mapping_repository import MappingRepository
-from prismic.persistence.repositories.media_repository import MediaRepository
-from prismic.persistence.repositories.tag_repository import TagRepository
+from prismic.persistence.repositories import mapping_repository, media_repository, tag_repository
 
 
 @pytest.fixture
-def tags(migrated_connection: sqlite3.Connection) -> TagRepository:
-    return TagRepository(migrated_connection)
+def tags(migrated_connection: sqlite3.Connection) -> tag_repository.TagRepository:
+    return tag_repository.TagRepository(migrated_connection)
 
 
 @pytest.fixture
-def media(migrated_connection: sqlite3.Connection) -> MediaRepository:
-    return MediaRepository(migrated_connection)
+def media(migrated_connection: sqlite3.Connection) -> media_repository.MediaRepository:
+    return media_repository.MediaRepository(migrated_connection)
 
 
 @pytest.fixture
-def mappings(migrated_connection: sqlite3.Connection) -> MappingRepository:
-    return MappingRepository(migrated_connection)
+def mappings(migrated_connection: sqlite3.Connection) -> mapping_repository.MappingRepository:
+    return mapping_repository.MappingRepository(migrated_connection)

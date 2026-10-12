@@ -4,23 +4,27 @@ import pytest
 
 from prismic.domain.media import MediaState
 from prismic.persistence.errors import DuplicateMappingError
-from prismic.persistence.repositories.mapping_repository import MappingRepository
-from prismic.persistence.repositories.media_repository import MediaRepository
-from prismic.persistence.repositories.tag_repository import TagRepository
+from prismic.persistence.repositories import mapping_repository, media_repository, tag_repository
+
+_Repositories = tuple[
+    mapping_repository.MappingRepository,
+    media_repository.MediaRepository,
+    tag_repository.TagRepository,
+]
 
 
 @pytest.fixture
 def repositories(
     migrated_connection: sqlite3.Connection,
-) -> tuple[MappingRepository, MediaRepository, TagRepository]:
+) -> _Repositories:
     return (
-        MappingRepository(migrated_connection),
-        MediaRepository(migrated_connection),
-        TagRepository(migrated_connection),
+        mapping_repository.MappingRepository(migrated_connection),
+        media_repository.MediaRepository(migrated_connection),
+        tag_repository.TagRepository(migrated_connection),
     )
 
 
-def _make_media(media_repo: MediaRepository, relative_path: str) -> int:
+def _make_media(media_repo: media_repository.MediaRepository, relative_path: str) -> int:
     return media_repo.create(
         relative_path=relative_path,
         content_hash=relative_path,
@@ -31,8 +35,10 @@ def _make_media(media_repo: MediaRepository, relative_path: str) -> int:
 
 
 def _mapping_setup(
-    repositories: tuple[MappingRepository, MediaRepository, TagRepository], *, added: bool = False
-) -> tuple[MappingRepository, int, int]:
+    repositories: _Repositories,
+    *,
+    added: bool = False,
+) -> tuple[mapping_repository.MappingRepository, int, int]:
     mappings, media_repo, tag_repo = repositories
     media_id = _make_media(media_repo, "a.jpg")
     tag_id = tag_repo.create("vacation").id
@@ -42,7 +48,7 @@ def _mapping_setup(
 
 
 def test_add_and_tags_for_media(
-    repositories: tuple[MappingRepository, MediaRepository, TagRepository],
+    repositories: _Repositories,
 ) -> None:
     mappings, media_id, tag_id = _mapping_setup(repositories)
 
@@ -52,7 +58,7 @@ def test_add_and_tags_for_media(
 
 
 def test_add_the_same_mapping_twice_raises(
-    repositories: tuple[MappingRepository, MediaRepository, TagRepository],
+    repositories: _Repositories,
 ) -> None:
     mappings, media_id, tag_id = _mapping_setup(repositories, added=True)
 
@@ -61,7 +67,7 @@ def test_add_the_same_mapping_twice_raises(
 
 
 def test_add_with_a_nonexistent_media_id_is_rejected_by_the_foreign_key(
-    repositories: tuple[MappingRepository, MediaRepository, TagRepository],
+    repositories: _Repositories,
 ) -> None:
     mappings, _media_repo, tag_repo = repositories
     tag = tag_repo.create("vacation")
@@ -71,7 +77,7 @@ def test_add_with_a_nonexistent_media_id_is_rejected_by_the_foreign_key(
 
 
 def test_add_with_a_nonexistent_tag_id_is_rejected_by_the_foreign_key(
-    repositories: tuple[MappingRepository, MediaRepository, TagRepository],
+    repositories: _Repositories,
 ) -> None:
     mappings, media_repo, _tag_repo = repositories
     media_id = _make_media(media_repo, "a.jpg")
@@ -81,7 +87,7 @@ def test_add_with_a_nonexistent_tag_id_is_rejected_by_the_foreign_key(
 
 
 def test_remove_deletes_the_mapping(
-    repositories: tuple[MappingRepository, MediaRepository, TagRepository],
+    repositories: _Repositories,
 ) -> None:
     mappings, media_id, tag_id = _mapping_setup(repositories, added=True)
 
@@ -91,7 +97,7 @@ def test_remove_deletes_the_mapping(
 
 
 def test_remove_a_mapping_that_does_not_exist_is_a_no_op(
-    repositories: tuple[MappingRepository, MediaRepository, TagRepository],
+    repositories: _Repositories,
 ) -> None:
     mappings, media_repo, tag_repo = repositories
     media_id = _make_media(media_repo, "a.jpg")
@@ -101,40 +107,31 @@ def test_remove_a_mapping_that_does_not_exist_is_a_no_op(
 
 
 def test_media_ids_for_tags_with_no_tags_returns_empty(
-    repositories: tuple[MappingRepository, MediaRepository, TagRepository],
+    repositories: _Repositories,
 ) -> None:
     mappings, _media_repo, _tag_repo = repositories
 
     assert mappings.media_ids_for_tags([]) == []
 
 
-def test_media_ids_for_tags_is_an_intersection(
-    repositories: tuple[MappingRepository, MediaRepository, TagRepository],
+@pytest.mark.parametrize("has_common_media", [True, False], ids=["intersection", "no-common-media"])
+def test_media_ids_for_tags_return_only_media_common_to_all_tags(
+    repositories: _Repositories,
+    has_common_media: bool,
 ) -> None:
     mappings, media_repo, tag_repo = repositories
     beach = _make_media(media_repo, "beach.jpg")
     mountain = _make_media(media_repo, "mountain.jpg")
     vacation = tag_repo.create("vacation")
-    summer = tag_repo.create("summer")
+    other = tag_repo.create("summer" if has_common_media else "work")
 
     mappings.add(beach, vacation.id)
-    mappings.add(beach, summer.id)
-    mappings.add(mountain, vacation.id)
+    if has_common_media:
+        mappings.add(beach, other.id)
+        mappings.add(mountain, vacation.id)
+        assert set(mappings.media_ids_for_tags([vacation.id])) == {beach, mountain}
+    else:
+        mappings.add(mountain, other.id)
 
-    assert set(mappings.media_ids_for_tags([vacation.id])) == {beach, mountain}
-    assert mappings.media_ids_for_tags([vacation.id, summer.id]) == [beach]
-
-
-def test_media_ids_for_tags_with_no_common_media_is_empty(
-    repositories: tuple[MappingRepository, MediaRepository, TagRepository],
-) -> None:
-    mappings, media_repo, tag_repo = repositories
-    beach = _make_media(media_repo, "beach.jpg")
-    mountain = _make_media(media_repo, "mountain.jpg")
-    vacation = tag_repo.create("vacation")
-    work = tag_repo.create("work")
-
-    mappings.add(beach, vacation.id)
-    mappings.add(mountain, work.id)
-
-    assert mappings.media_ids_for_tags([vacation.id, work.id]) == []
+    expected = [beach] if has_common_media else []
+    assert mappings.media_ids_for_tags([vacation.id, other.id]) == expected

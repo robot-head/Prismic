@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from concurrent.futures import Future
 from pathlib import Path
-from types import TracebackType
 
 from prismic.application.commands.base import Command
 from prismic.application.dispatcher import CommandDispatcher
@@ -20,6 +19,7 @@ from prismic.application.history import History
 from prismic.application.state import ApplicationState
 from prismic.application.tag_recency import TagRecencyTracker
 from prismic.application.worker_pool import WorkerPool
+from prismic.context import ClosableContext
 from prismic.domain.collection import Collection
 from prismic.indexing.reconciler import (
     ProgressCallback,
@@ -36,7 +36,7 @@ from prismic.persistence.repositories.tag_correlation_repository import TagCorre
 from prismic.persistence.repositories.tag_repository import TagRepository
 
 
-class PrismicSession:
+class PrismicSession(ClosableContext):
     """A fully-opened collection, ready for commands and queries.
 
     Construction matches Phase 1's open/close lifecycle: `open()` either
@@ -47,9 +47,7 @@ class PrismicSession:
     worker pool.
     """
 
-    def __init__(
-        self, opened: OpenCollection, on_progress: ProgressCallback | None = None
-    ) -> None:
+    def __init__(self, opened: OpenCollection, on_progress: ProgressCallback | None = None) -> None:
         self._opened = opened
         self.tags = TagRepository(opened.connection)
         self.media = MediaRepository(opened.connection)
@@ -165,14 +163,3 @@ class PrismicSession:
         # main connection underneath it.
         self.worker_pool.shutdown(wait=True)
         self._opened.close()
-
-    def __enter__(self) -> PrismicSession:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        self.close()

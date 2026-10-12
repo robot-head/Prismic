@@ -25,6 +25,48 @@ def _set_current_item(window: MainWindow, index: int = 0) -> tuple[PrismicSessio
     return session, media_id
 
 
+def _set_first_of_two_results(window: MainWindow) -> tuple[PrismicSession, int, int]:
+    session = window.session
+    assert session is not None
+    first_id, second_id = session.state.result_set
+    session.state.current_item = first_id
+    window._sync_result_selection()
+    return session, first_id, second_id
+
+
+def _tap_modifier(qtbot: QtBot, widget: QWidget, key: Qt.Key = Qt.Key.Key_Control) -> None:
+    qtbot.keyPress(widget, key)
+    qtbot.keyRelease(widget, key)
+
+
+def _create_one_tag(window: MainWindow, name: str = "vacation") -> PrismicSession:
+    session = window.session
+    assert session is not None
+    window._on_tag_create(name)
+    assert len(session.tags.list_all()) == 1
+    return session
+
+
+def _press_shortcut_and_read_tags(
+    qtbot: QtBot, window: MainWindow, current_id: int, key: Qt.Key
+) -> list[int]:
+    qtbot.keyClick(window.result_list, key)
+    session = window.session
+    assert session is not None
+    return [tag.id for tag in session.mappings.tags_for_media(current_id)]
+
+
+def _capture_settings_exec(monkeypatch: pytest.MonkeyPatch) -> list[SettingsDialog]:
+    opened: list[SettingsDialog] = []
+
+    def capture(dialog: SettingsDialog) -> int:
+        opened.append(dialog)
+        return 0
+
+    monkeypatch.setattr(SettingsDialog, "exec", capture)
+    return opened
+
+
 def _create_current_tags(window: MainWindow, *names: str) -> tuple[PrismicSession, int]:
     session, media_id = _set_current_item(window)
     for name in names:
@@ -46,11 +88,7 @@ def _enter_focus_mode(qtbot: QtBot, window: MainWindow) -> None:
 
 
 def _show_two_item_history(qtbot: QtBot, window: MainWindow) -> tuple[PrismicSession, int, int]:
-    session = window.session
-    assert session is not None
-    first_id, second_id = session.state.result_set
-    session.state.current_item = first_id
-    window._sync_result_selection()
+    session, first_id, second_id = _set_first_of_two_results(window)
     window._show_current_media()
     qtbot.keyClick(window, Qt.Key.Key_Right)
     return session, first_id, second_id
@@ -146,10 +184,7 @@ def test_navigation_with_no_current_item_selects_the_first(
 def test_undo_and_redo_shortcuts_update_tag_history(
     qtbot: QtBot, window: MainWindow, redo: bool, expected_count: int
 ) -> None:
-    session = window.session
-    assert session is not None
-    window._on_tag_create("vacation")
-    assert len(session.tags.list_all()) == 1
+    session = _create_one_tag(window)
 
     qtbot.keyClick(window, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
     if redo:
@@ -164,10 +199,7 @@ def test_undo_and_redo_do_not_touch_a_focused_search_box_while_reverting_tag_his
     """Ctrl+Z/Ctrl+Y must never fall through to a focused `QLineEdit`'s
     own built-in text-undo -- they're global tag-history commands, not
     text-editing ones, no matter what has focus."""
-    session = window.session
-    assert session is not None
-    window._on_tag_create("vacation")
-    assert len(session.tags.list_all()) == 1
+    session = _create_one_tag(window)
 
     _focus(qtbot, window.item_tag_panel.search_box)
     qtbot.keyClicks(window.item_tag_panel.search_box, "abc")
@@ -382,11 +414,7 @@ def test_clicking_elsewhere_is_a_no_op_when_nothing_is_being_typed_into(
 def test_navigation_still_works_when_the_result_list_has_focus(
     qtbot: QtBot, window: MainWindow
 ) -> None:
-    session = window.session
-    assert session is not None
-    first_id, second_id = session.state.result_set
-    session.state.current_item = first_id
-    window._sync_result_selection()
+    session, _first_id, second_id = _set_first_of_two_results(window)
 
     _focus(qtbot, window.result_list)
     qtbot.keyClick(window.result_list, Qt.Key.Key_Right)
@@ -440,15 +468,13 @@ def test_opening_a_collection_resets_focus_mode(
 def test_digit_toggles_the_unselected_tag_numbered_with_it(
     qtbot: QtBot, window: MainWindow
 ) -> None:
-    session, current_id = _create_current_tags(window, "a", "b")
+    _session, current_id = _create_current_tags(window, "a", "b")
     assert window._tag_shortcut_mode_action.isChecked() is False  # unselected by default
     tag_id = window.item_tag_panel.model.tag_id_for_slot(0, selected=False)
     assert tag_id is not None
 
     _focus(qtbot, window.result_list)
-    qtbot.keyClick(window.result_list, Qt.Key.Key_1)
-
-    assert [t.id for t in session.mappings.tags_for_media(current_id)] == [tag_id]
+    assert _press_shortcut_and_read_tags(qtbot, window, current_id, Qt.Key.Key_1) == [tag_id]
 
 
 def test_digit_toggles_a_tag_even_while_a_search_box_is_focused(
@@ -509,13 +535,11 @@ def test_ctrl_tapped_alone_toggles_which_tags_are_numbered(
     assert window._tag_shortcut_mode_action.isChecked() is False
 
     _focus(qtbot, window.result_list)
-    qtbot.keyPress(window.result_list, Qt.Key.Key_Control)
-    qtbot.keyRelease(window.result_list, Qt.Key.Key_Control)
+    _tap_modifier(qtbot, window.result_list)
 
     assert window._tag_shortcut_mode_action.isChecked() is True
 
-    qtbot.keyPress(window.result_list, Qt.Key.Key_Control)
-    qtbot.keyRelease(window.result_list, Qt.Key.Key_Control)
+    _tap_modifier(qtbot, window.result_list)
 
     assert window._tag_shortcut_mode_action.isChecked() is False
 
@@ -525,10 +549,7 @@ def test_ctrl_plus_another_key_does_not_toggle_the_mode_on_release(
 ) -> None:
     """Ctrl+Z (undo) holds Ctrl down for an unrelated shortcut -- its
     eventual release must not also count as "tapped alone."."""
-    session = window.session
-    assert session is not None
-    window._on_tag_create("vacation")
-    assert len(session.tags.list_all()) == 1
+    session = _create_one_tag(window)
 
     _focus(qtbot, window.result_list)
     qtbot.keyPress(window.result_list, Qt.Key.Key_Control)
@@ -574,11 +595,7 @@ def rebind(window: MainWindow, shortcut_id: str, binding: str) -> None:
 
 
 def test_rebinding_navigation_moves_it_to_the_new_key(qtbot: QtBot, window: MainWindow) -> None:
-    session = window.session
-    assert session is not None
-    first_id, second_id = session.state.result_set
-    session.state.current_item = first_id
-    window._sync_result_selection()
+    session, first_id, second_id = _set_first_of_two_results(window)
     rebind(window, shortcuts.NAVIGATE_NEXT, "F5")
 
     _focus(qtbot, window.result_list)
@@ -682,15 +699,11 @@ def test_rebinding_a_quick_select_key_toggles_the_same_tag(
     rebind(window, shortcuts.quick_select_id(0), "Q")
 
     _focus(qtbot, window.result_list)
-    qtbot.keyClick(window.result_list, Qt.Key.Key_Q)
-
-    assert [t.id for t in session.mappings.tags_for_media(current_id)] == [tag_id]
+    assert _press_shortcut_and_read_tags(qtbot, window, current_id, Qt.Key.Key_Q) == [tag_id]
 
     # ...and the digit it used to be on is genuinely free again, not
     # still quietly wired up alongside the new key.
-    qtbot.keyClick(window.result_list, Qt.Key.Key_1)
-
-    assert [t.id for t in session.mappings.tags_for_media(current_id)] == [tag_id]
+    assert _press_shortcut_and_read_tags(qtbot, window, current_id, Qt.Key.Key_1) == [tag_id]
 
 
 def test_a_rebound_quick_select_key_is_still_typeable_with_ctrl(
@@ -737,8 +750,7 @@ def test_rebinding_the_numbering_swap_moves_it_to_another_modifier(
     assert window._tag_shortcut_mode_action.isChecked() is True
 
     # Ctrl is an ordinary modifier again, with no gesture attached.
-    qtbot.keyPress(window.result_list, Qt.Key.Key_Control)
-    qtbot.keyRelease(window.result_list, Qt.Key.Key_Control)
+    _tap_modifier(qtbot, window.result_list)
 
     assert window._tag_shortcut_mode_action.isChecked() is True
 
@@ -749,8 +761,7 @@ def test_unbinding_the_numbering_swap_disables_the_gesture(
     rebind(window, shortcuts.SWAP_TAG_NUMBERING, "")
     _focus(qtbot, window.result_list)
 
-    qtbot.keyPress(window.result_list, Qt.Key.Key_Control)
-    qtbot.keyRelease(window.result_list, Qt.Key.Key_Control)
+    _tap_modifier(qtbot, window.result_list)
 
     assert window._tag_shortcut_mode_action.isChecked() is False
 
@@ -784,8 +795,7 @@ def test_any_shortcut_can_be_bound_to_a_modifier_tap(qtbot: QtBot, window: MainW
     rebind(window, shortcuts.NAVIGATE_NEXT, "Ctrl")
 
     _focus(qtbot, window.result_list)
-    qtbot.keyPress(window.result_list, Qt.Key.Key_Control)
-    qtbot.keyRelease(window.result_list, Qt.Key.Key_Control)
+    _tap_modifier(qtbot, window.result_list)
 
     assert session.state.current_item == second_id
 
@@ -795,19 +805,12 @@ def test_a_menu_command_can_be_bound_to_a_modifier_tap(
 ) -> None:
     """Menu commands run as QActions rather than through the keyboard
     controller, so the tap dispatcher has to reach those too."""
-    opened: list[SettingsDialog] = []
-
-    def capture(dialog: SettingsDialog) -> int:
-        opened.append(dialog)
-        return 0
-
-    monkeypatch.setattr(SettingsDialog, "exec", capture)
+    opened = _capture_settings_exec(monkeypatch)
     rebind(window, shortcuts.SWAP_TAG_NUMBERING, "")
     rebind(window, shortcuts.OPEN_SETTINGS, "Ctrl")
 
     _focus(qtbot, window.result_list)
-    qtbot.keyPress(window.result_list, Qt.Key.Key_Control)
-    qtbot.keyRelease(window.result_list, Qt.Key.Key_Control)
+    _tap_modifier(qtbot, window.result_list)
 
     assert len(opened) == 1
 
@@ -822,8 +825,7 @@ def test_a_quick_select_shortcut_can_be_bound_to_a_modifier_tap(
     rebind(window, shortcuts.quick_select_id(0), "Ctrl")
 
     _focus(qtbot, window.result_list)
-    qtbot.keyPress(window.result_list, Qt.Key.Key_Control)
-    qtbot.keyRelease(window.result_list, Qt.Key.Key_Control)
+    _tap_modifier(qtbot, window.result_list)
 
     assert [t.id for t in session.mappings.tags_for_media(current_id)] == [tag_id]
 
@@ -866,13 +868,7 @@ def test_opening_settings_applies_what_is_changed_in_it(
     checks `open_settings` actually subscribes to the dialog, rather than
     recording a rebind that never reaches the running UI. `exec()` is
     stubbed out because it would otherwise block on its own event loop."""
-    opened: list[SettingsDialog] = []
-
-    def capture(dialog: SettingsDialog) -> int:
-        opened.append(dialog)
-        return 0
-
-    monkeypatch.setattr(SettingsDialog, "exec", capture)
+    opened = _capture_settings_exec(monkeypatch)
 
     window.open_settings()
 
@@ -889,13 +885,7 @@ def test_opening_settings_applies_what_is_changed_in_it(
 def test_the_settings_menu_entry_opens_the_window(
     window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    opened: list[SettingsDialog] = []
-
-    def capture(dialog: SettingsDialog) -> int:
-        opened.append(dialog)
-        return 0
-
-    monkeypatch.setattr(SettingsDialog, "exec", capture)
+    opened = _capture_settings_exec(monkeypatch)
 
     window._shortcut_actions[shortcuts.OPEN_SETTINGS].trigger()
 

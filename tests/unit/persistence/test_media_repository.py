@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 
-from prismic.domain.media import MediaState
+from prismic.domain.media import Media, MediaState
 from prismic.persistence.errors import UnknownMediaError
 from prismic.persistence.repositories.media_repository import MediaRepository
 
@@ -12,14 +12,18 @@ def repository(migrated_connection: sqlite3.Connection) -> MediaRepository:
     return MediaRepository(migrated_connection)
 
 
-def test_create_and_get_round_trip(repository: MediaRepository) -> None:
-    created = repository.create(
+def _create_cat_media(repository: MediaRepository) -> Media:
+    return repository.create(
         relative_path="photos/cat.jpg",
         content_hash="hash-1",
         size=1024,
         mtime=1_700_000_000.0,
         state=MediaState.ACTIVE,
     )
+
+
+def test_create_and_get_round_trip(repository: MediaRepository) -> None:
+    created = _create_cat_media(repository)
 
     fetched = repository.get(created.id)
 
@@ -31,13 +35,7 @@ def test_get_returns_none_for_unknown_id(repository: MediaRepository) -> None:
 
 
 def test_get_by_relative_path(repository: MediaRepository) -> None:
-    created = repository.create(
-        relative_path="photos/cat.jpg",
-        content_hash="hash-1",
-        size=1024,
-        mtime=1_700_000_000.0,
-        state=MediaState.ACTIVE,
-    )
+    created = _create_cat_media(repository)
 
     assert repository.get_by_relative_path("photos/cat.jpg") == created
     assert repository.get_by_relative_path("photos/missing.jpg") is None

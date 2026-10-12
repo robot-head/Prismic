@@ -25,10 +25,20 @@ def test_dispatch_with_no_handlers_reports_unconsumed() -> None:
     assert resolver.dispatch(InputEvent(key="a")) is False
 
 
-def test_text_editing_takes_precedence_over_global_command() -> None:
+@pytest.mark.parametrize("text_consumes", [True, False], ids=["text-handles", "viewer-fallback"])
+def test_dispatch_respects_context_precedence_when_text_editing_handles_or_falls_through(
+    text_consumes: bool,
+) -> None:
     resolver = InputResolver()
     calls: list[str] = []
-    resolver.register(InputContext.TEXT_EDITING, _recording_handler(calls, "text", consumes=True))
+    resolver.register(
+        InputContext.TEXT_EDITING,
+        _recording_handler(calls, "text", consumes=text_consumes),
+    )
+    expected_calls = ["text"]
+    if not text_consumes:
+        resolver.register(InputContext.VIEWER, _recording_handler(calls, "viewer", consumes=True))
+        expected_calls.append("viewer")
     resolver.register(
         InputContext.GLOBAL_COMMAND, _recording_handler(calls, "global", consumes=True)
     )
@@ -36,22 +46,7 @@ def test_text_editing_takes_precedence_over_global_command() -> None:
     consumed = resolver.dispatch(InputEvent(key="a"))
 
     assert consumed is True
-    assert calls == ["text"]
-
-
-def test_falls_through_to_the_next_context_when_unconsumed() -> None:
-    resolver = InputResolver()
-    calls: list[str] = []
-    resolver.register(InputContext.TEXT_EDITING, _recording_handler(calls, "text", consumes=False))
-    resolver.register(InputContext.VIEWER, _recording_handler(calls, "viewer", consumes=True))
-    resolver.register(
-        InputContext.GLOBAL_COMMAND, _recording_handler(calls, "global", consumes=True)
-    )
-
-    consumed = resolver.dispatch(InputEvent(key="a"))
-
-    assert consumed is True
-    assert calls == ["text", "viewer"]
+    assert calls == expected_calls
 
 
 def test_precedence_order_is_text_local_viewer_global() -> None:

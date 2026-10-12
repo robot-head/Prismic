@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import QModelIndex, QRect, QRectF, QSize
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
@@ -11,6 +12,7 @@ from prismic.ui import theme
 from prismic.ui._thumbnail_badge import paint_play_badge
 from prismic.ui.result_model import MediaIdRole
 from prismic.ui.thumbnail_delegate import ThumbnailDelegate
+from prismic.ui.thumbnail_services import ThumbnailServices
 
 
 class _Provider:
@@ -35,7 +37,7 @@ def _delegate(
     resolve_path=lambda media_id: Path(f"/collection/{media_id}.jpg"),
     worker_pool=lambda: object(),
 ) -> ThumbnailDelegate:
-    return ThumbnailDelegate(provider, resolve_path, worker_pool)
+    return ThumbnailDelegate(ThumbnailServices(provider, worker_pool), resolve_path)
 
 
 def _option(
@@ -116,26 +118,20 @@ def test_delegate_size_hint_tracks_thumbnail_mode() -> None:
     assert delegate.sizeHint(option, index) == QSize(240, 64)
 
 
-def test_selected_row_wash_is_stronger_than_hover_wash(qtbot: QtBot) -> None:
+def test_selection_and_hover_use_distinct_row_washes(qtbot: QtBot) -> None:
     delegate = _delegate(_Provider())
     hovered = _render(delegate, state=QStyle.StateFlag.State_MouseOver)
-    selected = _render(
+    selected_and_hovered = _render(
         delegate,
         state=QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver,
     )
+    selected = _render(delegate, state=QStyle.StateFlag.State_Selected)
 
     hover_pixel = hovered.pixelColor(300, 21)
-    selected_pixel = selected.pixelColor(300, 21)
+    selected_pixel = selected_and_hovered.pixelColor(300, 21)
     assert selected_pixel.red() > hover_pixel.red() > 0
     assert selected_pixel.green() > hover_pixel.green()
     assert selected_pixel.blue() > hover_pixel.blue()
-
-
-def test_hover_only_state_does_not_get_treated_as_selected(qtbot: QtBot) -> None:
-    delegate = _delegate(_Provider())
-    hovered = _render(delegate, state=QStyle.StateFlag.State_MouseOver)
-    selected = _render(delegate, state=QStyle.StateFlag.State_Selected)
-
     assert hovered.pixelColor(300, 21).red() < selected.pixelColor(300, 21).red()
 
 
@@ -152,31 +148,27 @@ def test_missing_image_placeholder_requests_its_thumbnail(qtbot: QtBot) -> None:
     assert provider.requests == [(17, path, pool)]
 
 
-def test_video_placeholder_gets_a_badge_without_starting_a_thumbnail_request(
-    qtbot: QtBot,
-) -> None:
-    provider = _Provider()
+@pytest.mark.parametrize("cached", [False, True], ids=["placeholder", "cached"])
+def test_video_thumbnail_gets_a_badge_without_an_extra_request(qtbot: QtBot, cached: bool) -> None:
+    if cached:
+        pixmap = QPixmap(48, 48)
+        pixmap.fill(QColor("#2040e0"))
+        provider = _Provider({17: pixmap})
+        badge_background = QColor("#2040e0")
+        channel = "blue"
+    else:
+        provider = _Provider()
+        badge_background = QColor(theme.THUMB_PLACEHOLDER)
+        channel = "red"
     delegate = _delegate(provider)
     delegate.show_thumbnails = True
 
     image = _render(delegate, name="clip.webm")
 
     assert image.pixelColor(42, 52) == QColor(theme.TEXT_PRIMARY)
-    assert image.pixelColor(42, 42).red() < QColor(theme.THUMB_PLACEHOLDER).red()
-    assert provider.requests == []
-
-
-def test_cached_video_thumbnail_also_gets_the_play_badge(qtbot: QtBot) -> None:
-    pixmap = QPixmap(48, 48)
-    pixmap.fill(QColor("#2040e0"))
-    provider = _Provider({17: pixmap})
-    delegate = _delegate(provider)
-    delegate.show_thumbnails = True
-
-    image = _render(delegate, name="clip.webm")
-
-    assert image.pixelColor(42, 52) == QColor(theme.TEXT_PRIMARY)
-    assert image.pixelColor(42, 42).blue() < QColor("#2040e0").blue()
+    badge_channel = getattr(image.pixelColor(42, 42), channel)()
+    background_channel = getattr(badge_background, channel)()
+    assert badge_channel < background_channel
     assert provider.requests == []
 
 

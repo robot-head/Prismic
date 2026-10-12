@@ -16,7 +16,10 @@ from prismic.application.tag_ranking_settings import TagRankingSettingsStore
 from prismic.domain.tag import Tag
 from prismic.ui.main_window import MainWindow
 from prismic.ui.result_list_view import ResultListView
-from tests.gui.helpers import open_and_wait
+from tests.gui.helpers import (
+    open_and_wait,
+    refresh_and_hover_item_tag,
+)
 
 
 def test_main_window_union_annotations_resolve_to_their_declared_types() -> None:
@@ -264,9 +267,7 @@ def test_unchecked_tag_explains_how_to_number_its_group(
     open_and_wait(qtbot, window, collection_dir)
     window._on_tag_create("vacation")
     window._tag_shortcut_mode_action.setChecked(True)
-    window._refresh_all()
-
-    window._on_item_tag_hover(0)
+    refresh_and_hover_item_tag(window, 0)
 
     assert [label.text() for label in window._hover_bar._key_labels] == ["Ctrl"]
     assert window._hover_bar._text_label.text() == "Move quick-select shortcuts to unselected tags"

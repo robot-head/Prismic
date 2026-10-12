@@ -11,6 +11,7 @@ from pytestqt.qtbot import QtBot
 
 from prismic.ui.result_model import MediaIdRole
 from prismic.ui.thumbnail_delegate import ThumbnailDelegate
+from prismic.ui.thumbnail_services import ThumbnailServices
 
 
 class _Index:
@@ -68,7 +69,9 @@ class _Provider:
 def _delegate(qtbot: QtBot) -> ThumbnailDelegate:
     parent = QWidget()
     qtbot.addWidget(parent)
-    return ThumbnailDelegate(_Provider(), lambda _media_id: Path("photo.jpg"), lambda: None, parent)  # type: ignore[arg-type]
+    return ThumbnailDelegate(
+        ThumbnailServices(_Provider(), lambda: None), lambda _media_id: Path("photo.jpg"), parent
+    )  # type: ignore[arg-type]
 
 
 def test_thumbnail_and_filename_keep_their_exact_row_offsets(qtbot: QtBot, monkeypatch) -> None:

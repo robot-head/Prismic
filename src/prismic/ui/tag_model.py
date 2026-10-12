@@ -34,6 +34,7 @@ from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QPersistent
 
 from prismic.application.input.shortcuts import QUICK_SELECT_SLOT_COUNT
 from prismic.domain.tag import Tag
+from prismic.ui._model_utils import find_row_by_id, top_level_row_count
 
 _Index = QModelIndex | QPersistentModelIndex
 
@@ -95,15 +96,10 @@ class TagListModel(QAbstractListModel):
         return self._tags[row]
 
     def row_for_tag_id(self, tag_id: int) -> int | None:
-        for row, tag in enumerate(self._tags):
-            if tag.id == tag_id:
-                return row
-        return None
+        return find_row_by_id(self._tags, tag_id)
 
     def rowCount(self, parent: _Index | None = None) -> int:
-        if parent is not None and parent.isValid():
-            return 0
-        return len(self._tags)
+        return top_level_row_count(parent, len(self._tags))
 
     def data(self, index: _Index, role: int = Qt.ItemDataRole.DisplayRole) -> object:
         if not index.isValid() or not (0 <= index.row() < len(self._tags)):

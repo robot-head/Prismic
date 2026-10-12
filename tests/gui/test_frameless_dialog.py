@@ -37,24 +37,41 @@ def buttons_of(dialog: MessageDialog) -> list[QPushButton]:
 # -- Construction --------------------------------------------------------
 
 
-def test_the_dialog_has_no_native_frame(qtbot: QtBot) -> None:
+def _dialog(
+    qtbot: QtBot,
+    *,
+    title: str = "Title",
+    text: str = "Text",
+    buttons: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok,
+    default: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok,
+) -> MessageDialog:
     dialog = MessageDialog(
-        None, "Title", "Text", QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.Ok
+        None,
+        title,
+        text,
+        buttons,
+        default,
     )
     qtbot.addWidget(dialog)
+    return dialog
+
+
+def _yes_cancel_dialog(qtbot: QtBot) -> MessageDialog:
+    return _dialog(
+        qtbot,
+        buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        default=QMessageBox.StandardButton.Cancel,
+    )
+
+
+def test_the_dialog_has_no_native_frame(qtbot: QtBot) -> None:
+    dialog = _dialog(qtbot)
 
     assert dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
 
 
 def test_the_title_bar_shows_the_given_title(qtbot: QtBot) -> None:
-    dialog = MessageDialog(
-        None,
-        "Could not open collection",
-        "Text",
-        QMessageBox.StandardButton.Ok,
-        QMessageBox.StandardButton.Ok,
-    )
-    qtbot.addWidget(dialog)
+    dialog = _dialog(qtbot, title="Could not open collection")
 
     label = dialog.title_bar.findChild(QLabel, "dialogTitle")
     assert label is not None
@@ -62,14 +79,7 @@ def test_the_title_bar_shows_the_given_title(qtbot: QtBot) -> None:
 
 
 def test_the_body_shows_the_given_text(qtbot: QtBot) -> None:
-    dialog = MessageDialog(
-        None,
-        "Title",
-        "Something went wrong in a way the user needs to know about.",
-        QMessageBox.StandardButton.Ok,
-        QMessageBox.StandardButton.Ok,
-    )
-    qtbot.addWidget(dialog)
+    dialog = _dialog(qtbot, text="Something went wrong in a way the user needs to know about.")
 
     label = dialog.findChild(QLabel, "messageDialogText")
     assert label is not None
@@ -77,37 +87,20 @@ def test_the_body_shows_the_given_text(qtbot: QtBot) -> None:
 
 
 def test_only_the_requested_buttons_are_built(qtbot: QtBot) -> None:
-    dialog = MessageDialog(
-        None,
-        "Title",
-        "Text",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        QMessageBox.StandardButton.Cancel,
-    )
-    qtbot.addWidget(dialog)
+    dialog = _yes_cancel_dialog(qtbot)
 
     assert [button.text() for button in buttons_of(dialog)] == ["Yes", "Cancel"]
 
 
 def test_a_single_button_dialog_builds_just_that_one(qtbot: QtBot) -> None:
-    dialog = MessageDialog(
-        None, "Title", "Text", QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.Ok
-    )
-    qtbot.addWidget(dialog)
+    dialog = _dialog(qtbot)
 
     assert [button.text() for button in buttons_of(dialog)] == ["OK"]
 
 
 def test_the_default_button_is_marked_as_qts_default(qtbot: QtBot) -> None:
     """So Enter fires it, the same as a native QMessageBox."""
-    dialog = MessageDialog(
-        None,
-        "Title",
-        "Text",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        QMessageBox.StandardButton.Cancel,
-    )
-    qtbot.addWidget(dialog)
+    dialog = _yes_cancel_dialog(qtbot)
 
     by_text = {button.text(): button for button in buttons_of(dialog)}
     assert by_text["Cancel"].isDefault()
@@ -118,14 +111,7 @@ def test_the_default_button_is_marked_as_qts_default(qtbot: QtBot) -> None:
 
 
 def test_clicking_a_button_reports_it(qtbot: QtBot) -> None:
-    dialog = MessageDialog(
-        None,
-        "Title",
-        "Text",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        QMessageBox.StandardButton.Cancel,
-    )
-    qtbot.addWidget(dialog)
+    dialog = _yes_cancel_dialog(qtbot)
     yes_button = next(b for b in buttons_of(dialog) if b.text() == "Yes")
 
     qtbot.mouseClick(yes_button, Qt.MouseButton.LeftButton)
@@ -137,14 +123,7 @@ def test_clicking_a_button_reports_it(qtbot: QtBot) -> None:
 def test_escape_reports_the_default_button(qtbot: QtBot) -> None:
     """Matches `QMessageBox`'s own convention: closing some way other
     than a button click falls back to whichever button was default."""
-    dialog = MessageDialog(
-        None,
-        "Title",
-        "Text",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        QMessageBox.StandardButton.Cancel,
-    )
-    qtbot.addWidget(dialog)
+    dialog = _yes_cancel_dialog(qtbot)
 
     qtbot.keyClick(dialog, Qt.Key.Key_Escape)
 
@@ -153,14 +132,7 @@ def test_escape_reports_the_default_button(qtbot: QtBot) -> None:
 
 
 def test_the_title_bar_close_button_also_reports_the_default(qtbot: QtBot) -> None:
-    dialog = MessageDialog(
-        None,
-        "Title",
-        "Text",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        QMessageBox.StandardButton.Cancel,
-    )
-    qtbot.addWidget(dialog)
+    dialog = _yes_cancel_dialog(qtbot)
 
     qtbot.mouseClick(dialog.title_bar.close_button, Qt.MouseButton.LeftButton)
 

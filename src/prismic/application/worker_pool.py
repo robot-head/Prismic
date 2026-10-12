@@ -11,14 +11,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from types import TracebackType
 from typing import ParamSpec, TypeVar
+
+from prismic.context import ClosableContext
 
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
 
 
-class WorkerPool:
+class WorkerPool(ClosableContext):
     def __init__(self, max_workers: int = 2) -> None:
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="prismic-worker"
@@ -30,13 +31,5 @@ class WorkerPool:
     def shutdown(self, *, wait: bool = True) -> None:
         self._executor.shutdown(wait=wait)
 
-    def __enter__(self) -> WorkerPool:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
+    def close(self) -> None:
         self.shutdown()

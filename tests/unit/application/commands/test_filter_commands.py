@@ -43,25 +43,19 @@ def test_select_an_already_selected_tag_raises(context: CommandContext) -> None:
         FilterSelectCommand(tag_id=tag.id).execute(context)
 
 
-def test_deselect_execute_removes_from_the_filter(context: CommandContext) -> None:
+@pytest.mark.parametrize("undo", [False, True], ids=["execute", "undo"])
+def test_deselect_execute_removes_from_the_filter_and_undo_restores_it(
+    context: CommandContext, undo: bool
+) -> None:
     tag = context.tags.create("vacation")
     FilterSelectCommand(tag_id=tag.id).execute(context)
     command = FilterDeselectCommand(tag_id=tag.id)
 
     command.execute(context)
+    if undo:
+        command.undo(context)
 
-    assert context.state.selected_tag_ids == []
-
-
-def test_deselect_undo_restores_the_filter(context: CommandContext) -> None:
-    tag = context.tags.create("vacation")
-    FilterSelectCommand(tag_id=tag.id).execute(context)
-    command = FilterDeselectCommand(tag_id=tag.id)
-    command.execute(context)
-
-    command.undo(context)
-
-    assert context.state.selected_tag_ids == [tag.id]
+    assert context.state.selected_tag_ids == ([tag.id] if undo else [])
 
 
 def test_deselect_a_tag_not_selected_raises(context: CommandContext) -> None:

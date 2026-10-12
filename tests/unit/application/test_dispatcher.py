@@ -10,9 +10,13 @@ from prismic.application.history import History
 from prismic.application.state import ApplicationState
 from prismic.domain.media import MediaState
 from prismic.persistence.errors import UnknownMediaError, UnknownTagError
-from prismic.persistence.repositories.mapping_repository import MappingRepository
-from prismic.persistence.repositories.media_repository import MediaRepository
-from prismic.persistence.repositories.tag_repository import TagRepository
+from prismic.persistence.repositories import mapping_repository, media_repository, tag_repository
+
+
+def _make_media(media: media_repository.MediaRepository):
+    return media.create(
+        relative_path="a.jpg", content_hash="a", size=1, mtime=1.0, state=MediaState.ACTIVE
+    )
 
 
 @pytest.fixture
@@ -24,9 +28,9 @@ def state() -> ApplicationState:
 def dispatcher(
     migrated_connection: sqlite3.Connection,
     state: ApplicationState,
-    tags: TagRepository,
-    media: MediaRepository,
-    mappings: MappingRepository,
+    tags: tag_repository.TagRepository,
+    media: media_repository.MediaRepository,
+    mappings: mapping_repository.MappingRepository,
 ) -> CommandDispatcher:
     return CommandDispatcher(migrated_connection, state, tags, media, mappings, History())
 
@@ -34,12 +38,10 @@ def dispatcher(
 def test_execute_always_leaves_current_item_null_or_in_the_result_set(
     dispatcher: CommandDispatcher,
     state: ApplicationState,
-    media: MediaRepository,
-    tags: TagRepository,
+    media: media_repository.MediaRepository,
+    tags: tag_repository.TagRepository,
 ) -> None:
-    photo = media.create(
-        relative_path="a.jpg", content_hash="a", size=1, mtime=1.0, state=MediaState.ACTIVE
-    )
+    photo = _make_media(media)
     tag = tags.create("vacation")
 
     dispatcher.execute(FilterSelectCommand(tag_id=tag.id))
@@ -52,7 +54,7 @@ def test_execute_always_leaves_current_item_null_or_in_the_result_set(
 
 
 def test_execute_then_undo_restores_the_original_state(
-    dispatcher: CommandDispatcher, tags: TagRepository
+    dispatcher: CommandDispatcher, tags: tag_repository.TagRepository
 ) -> None:
     before = tags.list_all()
 
@@ -65,7 +67,7 @@ def test_execute_then_undo_restores_the_original_state(
 
 
 def test_multiple_sequential_undos_unwind_in_reverse_order(
-    dispatcher: CommandDispatcher, tags: TagRepository
+    dispatcher: CommandDispatcher, tags: tag_repository.TagRepository
 ) -> None:
     dispatcher.execute(TagCreateCommand(name="first"))
     dispatcher.execute(TagCreateCommand(name="second"))
@@ -85,7 +87,7 @@ def test_multiple_sequential_undos_unwind_in_reverse_order(
 
 
 def test_undo_then_redo_reapplies_the_command(
-    dispatcher: CommandDispatcher, tags: TagRepository
+    dispatcher: CommandDispatcher, tags: tag_repository.TagRepository
 ) -> None:
     dispatcher.execute(TagCreateCommand(name="vacation"))
     dispatcher.undo()
@@ -98,7 +100,7 @@ def test_undo_then_redo_reapplies_the_command(
 
 
 def test_a_fresh_command_clears_the_redo_stack(
-    dispatcher: CommandDispatcher, tags: TagRepository
+    dispatcher: CommandDispatcher, tags: tag_repository.TagRepository
 ) -> None:
     dispatcher.execute(TagCreateCommand(name="first"))
     dispatcher.undo()
@@ -111,8 +113,8 @@ def test_a_fresh_command_clears_the_redo_stack(
 def test_a_failed_command_publishes_no_partial_mutation(
     dispatcher: CommandDispatcher,
     state: ApplicationState,
-    tags: TagRepository,
-    media: MediaRepository,
+    tags: tag_repository.TagRepository,
+    media: media_repository.MediaRepository,
 ) -> None:
     tag = tags.create("vacation")
     state_before = (list(state.result_set), state.current_item)
@@ -128,11 +130,11 @@ def test_a_failed_command_publishes_no_partial_mutation(
 
 
 def test_every_mapping_written_references_an_existing_media_and_tag(
-    dispatcher: CommandDispatcher, media: MediaRepository, tags: TagRepository
+    dispatcher: CommandDispatcher,
+    media: media_repository.MediaRepository,
+    tags: tag_repository.TagRepository,
 ) -> None:
-    photo = media.create(
-        relative_path="a.jpg", content_hash="a", size=1, mtime=1.0, state=MediaState.ACTIVE
-    )
+    photo = _make_media(media)
 
     with pytest.raises(UnknownTagError):
         dispatcher.execute(MappingAddCommand(media_id=photo.id, tag_id=999))

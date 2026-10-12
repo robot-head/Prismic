@@ -1,10 +1,8 @@
 from prismic.application.tag_ranking import promote_ranked_tags
-from prismic.domain.tag import Tag
-
-_A = Tag(id=1, name="a")
-_B = Tag(id=2, name="b")
-_C = Tag(id=3, name="c")
-_D = Tag(id=4, name="d")
+from tests.unit._tag_records import A as _A
+from tests.unit._tag_records import B as _B
+from tests.unit._tag_records import C as _C
+from tests.unit._tag_records import D as _D
 
 
 def test_with_no_promotion_signal_the_original_order_is_kept() -> None:

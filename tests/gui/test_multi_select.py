@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 
+from prismic.domain.tag import Tag
 from prismic.ui.main_window import MainWindow
 from tests.gui.helpers import checked_tag_names, open_and_wait
 
@@ -20,6 +21,17 @@ def _select_both(window: MainWindow) -> tuple[int, int]:
     window.session.state.selected_items = frozenset({a_id, b_id})
     window._refresh_all()
     return a_id, b_id
+
+
+def _create_common_tag(window: MainWindow, name: str) -> tuple[int, int, Tag]:
+    session = window.session
+    assert session is not None
+    a_id, b_id = session.state.result_set
+    window._on_tag_create(name)
+    tag = session.tags.list_all()[0]
+    session.mappings.add(a_id, tag.id)
+    session.mappings.add(b_id, tag.id)
+    return a_id, b_id, tag
 
 
 def _click(qtbot: QtBot, window: MainWindow, row: int, modifier: Qt.KeyboardModifier) -> None:
@@ -121,12 +133,9 @@ def test_multi_select_tag_panel_shows_only_tags_common_to_every_selected_file(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
     open_and_wait(qtbot, window, collection_dir)
-    a_id, b_id = window.session.state.result_set  # type: ignore[union-attr]
-    window._on_tag_create("kittens")
+    a_id, _b_id, _kittens = _create_common_tag(window, "kittens")
     window._on_tag_create("beach")
     tags_by_name = {t.name: t.id for t in window.session.tags.list_all()}  # type: ignore[union-attr]
-    window.session.mappings.add(a_id, tags_by_name["kittens"])  # type: ignore[union-attr]
-    window.session.mappings.add(b_id, tags_by_name["kittens"])  # type: ignore[union-attr]
     window.session.mappings.add(a_id, tags_by_name["beach"])  # type: ignore[union-attr]  # only a has it
 
     _select_both(window)
@@ -138,11 +147,7 @@ def test_toggling_a_common_tag_removes_it_from_every_selected_file(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
     open_and_wait(qtbot, window, collection_dir)
-    a_id, b_id = window.session.state.result_set  # type: ignore[union-attr]
-    window._on_tag_create("kittens")
-    kittens = window.session.tags.list_all()[0]  # type: ignore[union-attr]
-    window.session.mappings.add(a_id, kittens.id)  # type: ignore[union-attr]
-    window.session.mappings.add(b_id, kittens.id)  # type: ignore[union-attr]
+    a_id, b_id, kittens = _create_common_tag(window, "kittens")
     _select_both(window)
 
     window._on_item_tag_toggle(kittens.id)

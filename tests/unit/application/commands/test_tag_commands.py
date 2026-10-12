@@ -11,6 +11,11 @@ from prismic.persistence.errors import UnknownTagError
 from prismic.persistence.repositories.media_repository import MediaRepository
 
 
+def _rename_command(context: CommandContext) -> tuple[int, TagRenameCommand]:
+    tag = context.tags.create("vacation")
+    return tag.id, TagRenameCommand(tag_id=tag.id, new_name="travel")
+
+
 def _tag_with_mapping(context: CommandContext, media: MediaRepository) -> tuple[int, int]:
     tag = context.tags.create("vacation")
     photo = media.create(
@@ -38,22 +43,20 @@ def test_create_undo_removes_the_tag(context: CommandContext) -> None:
 
 
 def test_rename_execute_changes_the_name(context: CommandContext) -> None:
-    tag = context.tags.create("vacation")
-    command = TagRenameCommand(tag_id=tag.id, new_name="travel")
+    tag_id, command = _rename_command(context)
 
     command.execute(context)
 
-    assert context.tags.get(tag.id).name == "travel"  # type: ignore[union-attr]
+    assert context.tags.get(tag_id).name == "travel"  # type: ignore[union-attr]
 
 
 def test_rename_undo_restores_the_previous_name(context: CommandContext) -> None:
-    tag = context.tags.create("vacation")
-    command = TagRenameCommand(tag_id=tag.id, new_name="travel")
+    tag_id, command = _rename_command(context)
     command.execute(context)
 
     command.undo(context)
 
-    assert context.tags.get(tag.id).name == "vacation"  # type: ignore[union-attr]
+    assert context.tags.get(tag_id).name == "vacation"  # type: ignore[union-attr]
 
 
 def test_rename_unknown_tag_raises(context: CommandContext) -> None:

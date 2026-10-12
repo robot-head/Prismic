@@ -12,8 +12,8 @@ from __future__ import annotations
 import os
 import sqlite3
 from pathlib import Path
-from types import TracebackType
 
+from prismic.context import ClosableContext
 from prismic.domain.collection import Collection
 from prismic.persistence import database, migrations
 from prismic.persistence.errors import MultipleCollectionFilesError
@@ -47,7 +47,7 @@ def resolve_database_path(path: Path) -> Path:
     return path / f"{path.name}{_SUFFIX}"
 
 
-class OpenCollection:
+class OpenCollection(ClosableContext):
     """A live, locked connection to an opened collection.
 
     Callers must `close()` it (or use it as a context manager) to release
@@ -64,17 +64,6 @@ class OpenCollection:
     def close(self) -> None:
         self.connection.close()
         self._lock.release()
-
-    def __enter__(self) -> OpenCollection:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        self.close()
 
 
 def open_collection(path: str | os.PathLike[str]) -> OpenCollection:

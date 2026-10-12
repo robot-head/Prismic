@@ -1,3 +1,4 @@
+import pytest
 from PySide6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 
@@ -50,76 +51,46 @@ def test_search_is_fuzzy_not_just_substring(qtbot: QtBot) -> None:
     assert _names(panel) == ["vacation"]
 
 
-def test_enter_always_creates_even_when_a_filtered_match_exists(qtbot: QtBot) -> None:
-    """Enter's outcome is exactly what was typed, never a row picked off
-    the filtered list underneath -- even though "sun" fuzzy-matches
-    "sunset" (and would sort first among the matches), Enter must create
-    a literal "sun" tag, not toggle "sunset"."""
+@pytest.mark.parametrize(
+    ("query", "has_match"),
+    [("sun", True), ("vacation", False), ("", False)],
+    ids=["matching-filtered-row", "no-match", "empty-search"],
+)
+def test_enter_creates_the_typed_tag_without_toggling_a_filtered_row(
+    qtbot: QtBot, query: str, has_match: bool
+) -> None:
+    """Enter creates exactly what was typed, even if the filtered list
+    underneath contains a fuzzy match such as "sun" and "sunset"."""
     panel = _make_panel(qtbot)
     toggled: list[int] = []
     created: list[str] = []
     panel.toggle_requested.connect(toggled.append)
     panel.create_and_check_requested.connect(created.append)
 
-    panel.search_box.setText("sun")
+    panel.search_box.setText(query)
+    if query:
+        assert bool(_names(panel)) is has_match
     qtbot.keyClick(panel.search_box, Qt.Key.Key_Return)
 
-    assert created == ["sun"]
+    assert created == ([query] if query else [])
     assert toggled == []
     assert panel.search_box.text() == ""
 
 
-def test_enter_with_no_match_requests_create_and_check(qtbot: QtBot) -> None:
-    panel = _make_panel(qtbot)
-    created: list[str] = []
-    panel.create_and_check_requested.connect(created.append)
-
-    panel.search_box.setText("vacation")
-    qtbot.keyClick(panel.search_box, Qt.Key.Key_Return)
-
-    assert created == ["vacation"]
-    assert panel.search_box.text() == ""
-
-
-def test_enter_with_empty_search_does_nothing(qtbot: QtBot) -> None:
-    panel = _make_panel(qtbot)
-    toggled: list[int] = []
-    created: list[str] = []
-    panel.toggle_requested.connect(toggled.append)
-    panel.create_and_check_requested.connect(created.append)
-
-    qtbot.keyClick(panel.search_box, Qt.Key.Key_Return)
-
-    assert toggled == []
-    assert created == []
-
-
-def test_clear_search_keep_focus_restores_focus_if_it_had_it(qtbot: QtBot) -> None:
+@pytest.mark.parametrize("focus_search", [True, False], ids=["had-focus", "did-not-have-focus"])
+def test_clear_search_preserves_whether_search_had_focus(qtbot: QtBot, focus_search: bool) -> None:
     panel = _make_panel(qtbot)
     panel.show()
     qtbot.waitExposed(panel)
     panel.search_box.setText("sun")
-    panel.search_box.setFocus()
-    qtbot.waitUntil(lambda: panel.search_box.hasFocus(), timeout=1000)
+    focus_target = panel.search_box if focus_search else panel.list_view
+    focus_target.setFocus()
+    qtbot.waitUntil(lambda: focus_target.hasFocus(), timeout=1000)
 
     panel.clear_search_keep_focus()
 
     assert panel.search_box.text() == ""
-    assert panel.search_box.hasFocus()
-
-
-def test_clear_search_keep_focus_does_not_steal_focus_if_it_lacked_it(qtbot: QtBot) -> None:
-    panel = _make_panel(qtbot)
-    panel.show()
-    qtbot.waitExposed(panel)
-    panel.search_box.setText("sun")
-    panel.list_view.setFocus()
-    qtbot.waitUntil(lambda: panel.list_view.hasFocus(), timeout=1000)
-
-    panel.clear_search_keep_focus()
-
-    assert panel.search_box.text() == ""
-    assert not panel.search_box.hasFocus()
+    assert panel.search_box.hasFocus() is focus_search
 
 
 def test_focus_search_gives_the_search_box_focus(qtbot: QtBot) -> None:

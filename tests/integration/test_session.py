@@ -4,12 +4,22 @@ from prismic.application.commands.tag_commands import TagCreateCommand
 from prismic.application.session import PrismicSession
 
 
-def test_open_assembles_a_fully_working_session(tmp_path: Path) -> None:
+def _collection_root(tmp_path: Path, *, first_file: bytes | None = None) -> Path:
     collection_root = tmp_path / "vacation"
     collection_root.mkdir()
-    (collection_root / "a.jpg").write_bytes(b"content")
+    if first_file is not None:
+        (collection_root / "a.jpg").write_bytes(first_file)
+    return collection_root
 
-    with PrismicSession.open(collection_root) as session:
+
+def _open_session(collection_root: Path) -> PrismicSession:
+    return PrismicSession.open(collection_root)
+
+
+def test_open_assembles_a_fully_working_session(tmp_path: Path) -> None:
+    collection_root = _collection_root(tmp_path, first_file=b"content")
+
+    with _open_session(collection_root) as session:
         assert session.collection.root == collection_root
         assert session.collection.database_path.exists()
 
@@ -22,10 +32,9 @@ def test_open_assembles_a_fully_working_session(tmp_path: Path) -> None:
 
 
 def test_commands_go_through_the_dispatcher_and_are_undoable(tmp_path: Path) -> None:
-    collection_root = tmp_path / "vacation"
-    collection_root.mkdir()
+    collection_root = _collection_root(tmp_path)
 
-    with PrismicSession.open(collection_root) as session:
+    with _open_session(collection_root) as session:
         session.initial_reconciliation.result(timeout=5)
 
         session.execute(TagCreateCommand(name="vacation"))
@@ -36,10 +45,9 @@ def test_commands_go_through_the_dispatcher_and_are_undoable(tmp_path: Path) -> 
 
 
 def test_rescan_returns_a_future_and_keeps_the_database_consistent(tmp_path: Path) -> None:
-    collection_root = tmp_path / "vacation"
-    collection_root.mkdir()
+    collection_root = _collection_root(tmp_path)
 
-    with PrismicSession.open(collection_root) as session:
+    with _open_session(collection_root) as session:
         session.initial_reconciliation.result(timeout=5)
 
         (collection_root / "new.jpg").write_bytes(b"new content")
@@ -53,11 +61,9 @@ def test_rescan_returns_a_future_and_keeps_the_database_consistent(tmp_path: Pat
 def test_is_first_scan_is_true_until_the_initial_scan_completes_then_false(
     tmp_path: Path,
 ) -> None:
-    collection_root = tmp_path / "vacation"
-    collection_root.mkdir()
-    (collection_root / "a.jpg").write_bytes(b"content")
+    collection_root = _collection_root(tmp_path, first_file=b"content")
 
-    with PrismicSession.open(collection_root) as session:
+    with _open_session(collection_root) as session:
         # True from construction -- read synchronously before the
         # background scan could possibly have written a count back.
         assert session.is_first_scan is True

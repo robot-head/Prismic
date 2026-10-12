@@ -23,12 +23,10 @@ from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
-from prismic.application.worker_pool import WorkerPool
-from prismic.media.formats import SUPPORTED_VIDEO_EXTENSIONS
 from prismic.ui import theme
 from prismic.ui._thumbnail_badge import paint_play_badge
 from prismic.ui.result_model import MediaIdRole
-from prismic.ui.thumbnail_provider import ThumbnailProvider
+from prismic.ui.thumbnail_services import ThumbnailServices
 
 _Index = QModelIndex | QPersistentModelIndex
 
@@ -41,15 +39,13 @@ _MARGIN = 8
 class ThumbnailDelegate(QStyledItemDelegate):
     def __init__(
         self,
-        provider: ThumbnailProvider,
+        thumbnails: ThumbnailServices,
         resolve_path: Callable[[int], Path | None],
-        worker_pool: Callable[[], WorkerPool | None],
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self._provider = provider
+        self._thumbnails = thumbnails
         self._resolve_path = resolve_path
-        self._worker_pool = worker_pool
         # Off by default -- thumbnails cost a decode per file, and the
         # plain filename list is the lighter-weight, always-available
         # option (View > Show Thumbnails opts in). Toggled by MainWindow;
@@ -107,8 +103,8 @@ class ThumbnailDelegate(QStyledItemDelegate):
         painter.save()
         painter.setClipPath(path)
 
-        pixmap = self._provider.get(media_id)
-        is_video = Path(name).suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS
+        pixmap = self._thumbnails.provider.get(media_id)
+        is_video = self._thumbnails.is_video(name)
 
         if pixmap is not None:
             scaled = pixmap.scaled(
@@ -125,18 +121,13 @@ class ThumbnailDelegate(QStyledItemDelegate):
             painter.fillRect(rect, QColor(theme.THUMB_PLACEHOLDER))
             if is_video:
                 paint_play_badge(painter, rect, size_fraction=0.26)
-            elif not self._provider.has_failed(media_id):
+            elif not self._thumbnails.provider.has_failed(media_id):
                 self._request_thumbnail(media_id, name)
 
         painter.restore()
 
     def _request_thumbnail(self, media_id: int, name: str) -> None:
-        if Path(name).suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
-            return
-        pool = self._worker_pool()
-        if pool is None:
-            return
         path = self._resolve_path(media_id)
         if path is None:
             return
-        self._provider.request(media_id, path, pool)
+        self._thumbnails.request(media_id, path)
