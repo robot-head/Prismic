@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import pytest
-from PySide6.QtCore import QModelIndex, QRect, Qt
+from PySide6.QtCore import QRect, Qt
 from PySide6.QtWidgets import QListView, QStyle, QStyleOptionViewItem
 from pytestqt.qtbot import QtBot
 
@@ -17,18 +15,13 @@ from prismic.ui.tag_model import (
     UncheckedSlotRole,
 )
 from prismic.ui.tag_row_delegate import TagRowDelegate
+from tests.gui._mutation_helpers import RecordingCalls, assert_editor_geometry
 
 
-class _RecordingPainter:
+class _RecordingPainter(RecordingCalls):
     def __init__(self) -> None:
-        self.calls: list[tuple[str, tuple[object, ...]]] = []
+        super().__init__()
         self.elide_width: int | None = None
-
-    def __getattr__(self, name: str) -> Callable[..., None]:
-        def record(*args: object) -> None:
-            self.calls.append((name, args))
-
-        return record
 
     def fontMetrics(self) -> _RecordingPainter:
         return self
@@ -36,9 +29,6 @@ class _RecordingPainter:
     def elidedText(self, text: str, mode: Qt.TextElideMode, width: int) -> str:
         self.elide_width = width
         return text
-
-    def calls_for(self, name: str) -> list[tuple[object, ...]]:
-        return [args for call_name, args in self.calls if call_name == name]
 
 
 def _delegate(qtbot: QtBot) -> TagRowDelegate:
@@ -199,13 +189,4 @@ def test_inline_editor_geometry_starts_after_the_checkbox(qtbot: QtBot) -> None:
     option = QStyleOptionViewItem()
     option.rect = QRect(7, 11, 220, 34)
 
-    class Editor:
-        geometry: QRect | None = None
-
-        def setGeometry(self, geometry: QRect) -> None:
-            self.geometry = geometry
-
-    editor = Editor()
-    delegate.updateEditorGeometry(editor, option, QModelIndex())  # type: ignore[arg-type]
-
-    assert editor.geometry == QRect(37, 13, 181, 30)
+    assert_editor_geometry(delegate, option, QRect(37, 13, 181, 30))
