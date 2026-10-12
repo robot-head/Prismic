@@ -176,12 +176,10 @@ def test_canceling_an_open_picker_does_not_open_a_path(
     assert opened == []
 
 
-def test_initial_path_uses_startup_lock_handling(qtbot: QtBot, collection_dir: Path) -> None:
-    first = MainWindow()
-    qtbot.addWidget(first)
-    first.open_collection(collection_dir)
-    qtbot.waitUntil(lambda: first.session is not None, timeout=5000)
-
+def test_initial_path_uses_startup_lock_handling(
+    qtbot: QtBot, window: MainWindow, collection_dir: Path
+) -> None:
+    open_and_wait(qtbot, window, collection_dir)
     second = MainWindow(initial_path=collection_dir)
     qtbot.addWidget(second)
     second.show()
