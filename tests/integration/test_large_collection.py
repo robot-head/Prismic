@@ -21,13 +21,18 @@ pytestmark = pytest.mark.slow
 _FILE_COUNT = 2000
 
 
-def test_a_large_collection_opens_without_blocking_and_scans_correctly(
-    tmp_path: Path,
-) -> None:
+def _large_collection(tmp_path: Path) -> Path:
     root = tmp_path / "big_collection"
     root.mkdir()
     for index in range(_FILE_COUNT):
         (root / f"photo_{index:05d}.jpg").write_bytes(f"content-{index}".encode())
+    return root
+
+
+def test_a_large_collection_opens_without_blocking_and_scans_correctly(
+    tmp_path: Path,
+) -> None:
+    root = _large_collection(tmp_path)
 
     start = time.perf_counter()
     session = PrismicSession.open(root)
@@ -56,10 +61,7 @@ def test_a_large_collection_opens_without_blocking_and_scans_correctly(
 def test_a_large_collection_rescans_quickly_when_nothing_changed(tmp_path: Path) -> None:
     """An unchanged-file rescan is a no-op per file (Phase 2) -- confirms
     that stays true at scale rather than degrading badly."""
-    root = tmp_path / "big_collection"
-    root.mkdir()
-    for index in range(_FILE_COUNT):
-        (root / f"photo_{index:05d}.jpg").write_bytes(f"content-{index}".encode())
+    root = _large_collection(tmp_path)
 
     with PrismicSession.open(root) as session:
         session.initial_reconciliation.result(timeout=30)

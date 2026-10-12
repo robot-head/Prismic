@@ -23,6 +23,8 @@ import sqlite3
 import time
 from collections.abc import Callable, Iterable
 
+from prismic.persistence import database
+
 DEFAULT_MIN_COOCCURRENCE = 5
 """Both tags must appear together on at least this many files for the
 pair to be tracked at all -- a floor against promoting a "correlation"
@@ -50,8 +52,7 @@ class TagCorrelationRepository:
         denominator, and the panel only ever asks one direction at a time
         (given a checked tag, what's correlated *with* it).
         """
-        self._connection.execute("BEGIN")
-        try:
+        with database.transaction(self._connection):
             self._connection.execute("DELETE FROM tag_correlations")
             self._connection.execute(
                 """
@@ -71,11 +72,6 @@ class TagCorrelationRepository:
             self._connection.execute(
                 "UPDATE tag_correlation_stats SET computed_at = ? WHERE id = 1", (self._clock(),)
             )
-        except Exception:
-            self._connection.execute("ROLLBACK")
-            raise
-        else:
-            self._connection.execute("COMMIT")
 
     def last_computed_at(self) -> float | None:
         row = self._connection.execute(

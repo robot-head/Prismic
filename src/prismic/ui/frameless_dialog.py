@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QMessageBox,
     QPushButton,
     QSizeGrip,
@@ -152,6 +153,14 @@ class FramelessDialog(QDialog):
         # grow opts in -- a message box's size follows its text, so it
         # has nothing to gain from one.
         self._size_grip = SizeGrip(self) if resizable else None
+
+    def _install_body_layout(self, body: QLayout, *, stretch: int = 0) -> QVBoxLayout:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.title_bar)
+        layout.addLayout(body, stretch)
+        return layout
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -292,11 +301,7 @@ class MessageDialog(FramelessDialog):
         body.addWidget(label)
         body.addLayout(button_row)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self.title_bar)
-        layout.addLayout(body)
+        self._install_body_layout(body)
 
         self.setMinimumWidth(360)
         self.adjustSize()  # settle to the layout's own size before centering
@@ -321,13 +326,15 @@ class MessageDialog(FramelessDialog):
         return dialog.clicked_button
 
     @staticmethod
-    def warning(parent: QWidget | None, title: str, text: str) -> None:
+    def _show_ok(parent: QWidget | None, title: str, text: str) -> None:
         MessageDialog(
             parent, title, text, QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.Ok
         ).exec()
 
     @staticmethod
+    def warning(parent: QWidget | None, title: str, text: str) -> None:
+        MessageDialog._show_ok(parent, title, text)
+
+    @staticmethod
     def critical(parent: QWidget | None, title: str, text: str) -> None:
-        MessageDialog(
-            parent, title, text, QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.Ok
-        ).exec()
+        MessageDialog._show_ok(parent, title, text)

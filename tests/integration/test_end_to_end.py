@@ -5,14 +5,27 @@ end-to-end rather than per-component.
 
 from pathlib import Path
 
-from prismic.application.commands.filter_commands import (
+from prismic.application.commands import (
     FilterDeselectCommand,
     FilterSelectCommand,
+    MappingAddCommand,
+    MappingRemoveCommand,
+    TagCreateCommand,
 )
-from prismic.application.commands.mapping_commands import MappingAddCommand, MappingRemoveCommand
-from prismic.application.commands.tag_commands import TagCreateCommand
 from prismic.application.session import PrismicSession
 from prismic.domain.media import MediaState
+
+
+def _collection(tmp_path: Path, files: dict[str, bytes]) -> Path:
+    root = tmp_path / "vacation"
+    root.mkdir()
+    for name, content in files.items():
+        (root / name).write_bytes(content)
+    return root
+
+
+def _await_initial_scan(session: PrismicSession) -> None:
+    session.initial_reconciliation.result(timeout=10)
 
 
 def test_fresh_directory_scans_in_the_background_and_the_session_is_usable_immediately(
@@ -20,10 +33,7 @@ def test_fresh_directory_scans_in_the_background_and_the_session_is_usable_immed
 ) -> None:
     """Opening returns a working session before the scan finishes -- the
     constructor itself must not block on background work."""
-    root = tmp_path / "vacation"
-    root.mkdir()
-    (root / "a.jpg").write_bytes(b"content-a")
-    (root / "b.jpg").write_bytes(b"content-b")
+    root = _collection(tmp_path, {"a.jpg": b"content-a", "b.jpg": b"content-b"})
 
     with PrismicSession.open(root) as session:
         # The session is immediately queryable/commandable, even before the
@@ -31,7 +41,7 @@ def test_fresh_directory_scans_in_the_background_and_the_session_is_usable_immed
         session.execute(TagCreateCommand(name="vacation"))
         assert [t.name for t in session.tags.list_all()] == ["vacation"]
 
-        session.initial_reconciliation.result(timeout=10)
+        _await_initial_scan(session)
         session.refresh_state()
 
         assert {m.relative_path for m in session.media.list_all()} == {"a.jpg", "b.jpg"}
@@ -41,19 +51,17 @@ def test_fresh_directory_scans_in_the_background_and_the_session_is_usable_immed
 def test_reopening_a_collection_matches_persisted_state_with_no_duplicate_identities(
     tmp_path: Path,
 ) -> None:
-    root = tmp_path / "vacation"
-    root.mkdir()
-    (root / "a.jpg").write_bytes(b"content-a")
+    root = _collection(tmp_path, {"a.jpg": b"content-a"})
 
     with PrismicSession.open(root) as session:
-        session.initial_reconciliation.result(timeout=10)
+        _await_initial_scan(session)
         session.execute(TagCreateCommand(name="vacation"))
         tag = session.tags.list_all()[0]
         media_id = session.media.list_all()[0].id
         session.execute(MappingAddCommand(media_id=media_id, tag_id=tag.id))
 
     with PrismicSession.open(root) as reopened:
-        reopened.initial_reconciliation.result(timeout=10)
+        _await_initial_scan(reopened)
 
         # Same media identity, same tag, same mapping -- not recreated.
         media_list = reopened.media.list_all()
@@ -70,14 +78,13 @@ def test_reopening_a_collection_matches_persisted_state_with_no_duplicate_identi
 def test_full_tag_filter_navigate_edit_undo_loop_in_one_continuous_session(
     tmp_path: Path,
 ) -> None:
-    root = tmp_path / "vacation"
-    root.mkdir()
-    (root / "a.jpg").write_bytes(b"content-a")
-    (root / "b.jpg").write_bytes(b"content-b")
-    (root / "c.jpg").write_bytes(b"content-c")
+    root = _collection(
+        tmp_path,
+        {"a.jpg": b"content-a", "b.jpg": b"content-b", "c.jpg": b"content-c"},
+    )
 
     with PrismicSession.open(root) as session:
-        session.initial_reconciliation.result(timeout=10)
+        _await_initial_scan(session)
         session.refresh_state()
         a, b, c = (m.id for m in session.media.list_all())
 

@@ -12,8 +12,8 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from types import TracebackType
 
+from prismic.context import ClosableContext
 from prismic.persistence.errors import CollectionLockedError
 
 if sys.platform == "win32":
@@ -47,7 +47,7 @@ else:
         fcntl.flock(fd, fcntl.LOCK_UN)
 
 
-class CollectionLock:
+class CollectionLock(ClosableContext):
     """An exclusive, non-blocking advisory lock on a collection's database file."""
 
     def __init__(self, path: Path) -> None:
@@ -72,14 +72,9 @@ class CollectionLock:
         os.close(self._fd)
         self._fd = None
 
+    def close(self) -> None:
+        self.release()
+
     def __enter__(self) -> CollectionLock:
         self.acquire()
         return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        self.release()

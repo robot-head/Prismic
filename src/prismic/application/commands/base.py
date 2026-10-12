@@ -11,18 +11,16 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from prismic.application.state import ApplicationState
-from prismic.persistence.repositories.mapping_repository import MappingRepository
-from prismic.persistence.repositories.media_repository import MediaRepository
-from prismic.persistence.repositories.tag_repository import TagRepository
+from prismic.application import state
+from prismic.persistence.repositories import mapping_repository, media_repository, tag_repository
 
 
 @dataclass
 class CommandContext:
-    tags: TagRepository
-    media: MediaRepository
-    mappings: MappingRepository
-    state: ApplicationState
+    tags: tag_repository.TagRepository
+    media: media_repository.MediaRepository
+    mappings: mapping_repository.MappingRepository
+    state: state.ApplicationState
 
 
 class Command(ABC):

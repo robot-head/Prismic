@@ -75,3 +75,7 @@ def test_get_marks_an_entry_as_recently_used_protecting_it_from_eviction(
     assert cache.get("first") is not None
     assert cache.get("second") is None  # evicted instead
     assert cache.get("third") is not None
+
+
+def test_default_image_cache_budget_is_256_mib() -> None:
+    assert ImageCache().max_bytes == 256 * 1024 * 1024

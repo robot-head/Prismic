@@ -5,18 +5,21 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QPainterPath, QPaintEvent, QPixmap
 from pytestqt.qtbot import QtBot
 
-from prismic.domain.media import Media, MediaState
+from prismic.domain.media import Media
+from prismic.ui import panel_toolbar, theme
 from prismic.ui.main_window import MainWindow
-
-
-@pytest.fixture
-def window(qtbot: QtBot) -> MainWindow:
-    win = MainWindow()
-    qtbot.addWidget(win)
-    return win
+from prismic.ui.panel_toolbar import (
+    FullScreenButton,
+    PanelToolbar,
+    RedoButton,
+    ShuffleButton,
+    UndoButton,
+)
+from tests.gui._media_helpers import make_media
 
 
 @pytest.fixture
@@ -26,15 +29,43 @@ def open_window(qtbot: QtBot, window: MainWindow, collection_dir: Path) -> MainW
     return window
 
 
+def _toggle_shuffle_once(
+    qtbot: QtBot, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> list[int]:
+    session = window.session
+    assert session is not None
+    original_order = list(session.state.result_set)
+    monkeypatch.setattr("random.shuffle", lambda seq: seq.reverse())
+    qtbot.mouseClick(window.panel_toolbar.shuffle_button, Qt.MouseButton.LeftButton)
+    return original_order
+
+
+def _create_tag_change(window: MainWindow):
+    session = window.session
+    assert session is not None
+    window._on_tag_create("vacation")
+    return session
+
+
+@pytest.fixture
+def shuffled_state(
+    qtbot: QtBot, open_window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> tuple[MainWindow, list[int]]:
+    return open_window, _toggle_shuffle_once(qtbot, open_window, monkeypatch)
+
+
 def _media(media_id: int, path: str) -> Media:
-    return Media(
-        id=media_id,
-        relative_path=path,
-        content_hash="",
-        size=0,
-        mtime=0.0,
-        state=MediaState.ACTIVE,
-    )
+    return make_media(media_id=media_id, relative_path=path)
+
+
+def _enter_fullscreen(qtbot: QtBot, window: MainWindow) -> None:
+    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
+    assert window.isFullScreen()
+
+
+def _exit_fullscreen(qtbot: QtBot, window: MainWindow) -> None:
+    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: not window.isFullScreen(), timeout=1000)
 
 
 # -- The row itself -----------------------------------------------------------
@@ -54,13 +85,26 @@ def test_the_toolbar_has_undo_and_redo_buttons_disabled_with_no_history(window: 
     assert not window.panel_toolbar.redo_button.isEnabled()
 
 
+def test_toolbar_icon_colors_follow_toggle_and_enabled_state(window: MainWindow) -> None:
+    toolbar = window.panel_toolbar
+
+    assert toolbar.shuffle_button._icon_color() == theme.TEXT_SECONDARY
+    toolbar.shuffle_button.setChecked(True)
+    assert toolbar.shuffle_button._icon_color() == theme.KEYCAP_BORDER
+    assert not toolbar.undo_button.isEnabled()
+    assert toolbar.undo_button._icon_color() == theme.BORDER
+    toolbar.undo_button.setEnabled(True)
+    assert toolbar.undo_button._icon_color() == theme.TEXT_SECONDARY
+    toolbar.undo_button.setEnabled(False)
+    assert toolbar.undo_button._icon_color() == theme.BORDER
+    toolbar.undo_button.setEnabled(False)
+    assert toolbar.undo_button._icon_color() == theme.BORDER
+
+
 def test_a_tag_change_enables_undo_and_a_click_reverts_it(
     qtbot: QtBot, open_window: MainWindow
 ) -> None:
-    session = open_window.session
-    assert session is not None
-
-    open_window._on_tag_create("vacation")
+    session = _create_tag_change(open_window)
     assert open_window.panel_toolbar.undo_button.isEnabled()
     assert not open_window.panel_toolbar.redo_button.isEnabled()
 
@@ -71,12 +115,8 @@ def test_a_tag_change_enables_undo_and_a_click_reverts_it(
     assert open_window.panel_toolbar.redo_button.isEnabled()
 
 
-def test_a_click_on_redo_reapplies_the_undone_change(
-    qtbot: QtBot, open_window: MainWindow
-) -> None:
-    session = open_window.session
-    assert session is not None
-    open_window._on_tag_create("vacation")
+def test_a_click_on_redo_reapplies_the_undone_change(qtbot: QtBot, open_window: MainWindow) -> None:
+    session = _create_tag_change(open_window)
     qtbot.mouseClick(open_window.panel_toolbar.undo_button, Qt.MouseButton.LeftButton)
 
     qtbot.mouseClick(open_window.panel_toolbar.redo_button, Qt.MouseButton.LeftButton)
@@ -163,14 +203,9 @@ def test_a_newly_eligible_item_is_spliced_in_at_a_random_position(
 
 
 def test_toggling_shuffle_reorders_the_result_list(
-    qtbot: QtBot, open_window: MainWindow, monkeypatch: pytest.MonkeyPatch
+    shuffled_state: tuple[MainWindow, list[int]],
 ) -> None:
-    session = open_window.session
-    assert session is not None
-    original_order = list(session.state.result_set)
-    monkeypatch.setattr("random.shuffle", lambda seq: seq.reverse())
-
-    qtbot.mouseClick(open_window.panel_toolbar.shuffle_button, Qt.MouseButton.LeftButton)
+    open_window, original_order = shuffled_state
 
     assert open_window._display_order == list(reversed(original_order))
     assert open_window.result_model.media_at(0).id == original_order[-1]
@@ -192,13 +227,9 @@ def test_the_shuffled_arrangement_survives_an_unrelated_refresh(
 
 
 def test_toggling_shuffle_off_restores_the_natural_order(
-    qtbot: QtBot, open_window: MainWindow, monkeypatch: pytest.MonkeyPatch
+    qtbot: QtBot, shuffled_state: tuple[MainWindow, list[int]]
 ) -> None:
-    session = open_window.session
-    assert session is not None
-    original_order = list(session.state.result_set)
-    monkeypatch.setattr("random.shuffle", lambda seq: seq.reverse())
-    qtbot.mouseClick(open_window.panel_toolbar.shuffle_button, Qt.MouseButton.LeftButton)
+    open_window, original_order = shuffled_state
 
     qtbot.mouseClick(open_window.panel_toolbar.shuffle_button, Qt.MouseButton.LeftButton)
 
@@ -243,58 +274,38 @@ def test_navigation_follows_the_shuffled_order(
 
 
 def test_toggling_fullscreen_enters_real_fullscreen(qtbot: QtBot, window: MainWindow) -> None:
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-
-    assert window.isFullScreen()
+    _enter_fullscreen(qtbot, window)
 
 
 def test_toggling_fullscreen_off_leaves_it(qtbot: QtBot, window: MainWindow) -> None:
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-
-    assert not window.isFullScreen()
+    _enter_fullscreen(qtbot, window)
+    _exit_fullscreen(qtbot, window)
 
 
-def test_leaving_fullscreen_restores_a_maximized_window_to_maximized(
-    qtbot: QtBot, window: MainWindow
+@pytest.mark.parametrize("was_maximized", [True, False], ids=["maximized", "normal"])
+def test_leaving_fullscreen_restores_the_previous_window_state(
+    qtbot: QtBot, window: MainWindow, was_maximized: bool
 ) -> None:
-    """`showFullScreen()` then `showNormal()` alone drops back to plain
-    windowed, silently un-maximizing a window that was maximized before
-    -- not "restore ... to the size it was before" when "before" was
-    maximized. `_pre_fullscreen_state` is what closes that gap."""
-    window.showMaximized()
-    qtbot.waitUntil(lambda: window.isMaximized(), timeout=1000)
+    if was_maximized:
+        window.showMaximized()
+        qtbot.waitUntil(lambda: window.isMaximized(), timeout=1000)
+    else:
+        window.showNormal()
+        qtbot.waitUntil(
+            lambda: not window.isMaximized() and not window.isFullScreen(), timeout=1000
+        )
+        window.setGeometry(50, 60, 700, 500)
+        original_geometry = window.geometry()
 
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-    assert window.isFullScreen()
-
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-
-    assert not window.isFullScreen()
-    assert window.isMaximized()
-
-
-def test_leaving_fullscreen_restores_a_normal_window_to_its_own_geometry(
-    qtbot: QtBot, window: MainWindow
-) -> None:
-    window.showNormal()
-    qtbot.waitUntil(lambda: not window.isMaximized() and not window.isFullScreen(), timeout=1000)
-    window.setGeometry(50, 60, 700, 500)
-    original_geometry = window.geometry()
-
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-    assert window.isFullScreen()
-
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-
-    assert not window.isFullScreen()
-    assert not window.isMaximized()
-    assert window.geometry() == original_geometry
+    _enter_fullscreen(qtbot, window)
+    _exit_fullscreen(qtbot, window)
+    assert window.isMaximized() is was_maximized
+    if not was_maximized:
+        assert window.geometry() == original_geometry
 
 
 def test_any_key_exits_fullscreen(qtbot: QtBot, window: MainWindow) -> None:
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-    assert window.isFullScreen()
+    _enter_fullscreen(qtbot, window)
 
     qtbot.keyClick(window, Qt.Key.Key_A)
 
@@ -303,8 +314,7 @@ def test_any_key_exits_fullscreen(qtbot: QtBot, window: MainWindow) -> None:
 
 
 def test_any_click_exits_fullscreen(qtbot: QtBot, window: MainWindow) -> None:
-    qtbot.mouseClick(window.panel_toolbar.fullscreen_button, Qt.MouseButton.LeftButton)
-    assert window.isFullScreen()
+    _enter_fullscreen(qtbot, window)
 
     qtbot.mouseClick(window.item_tag_panel.header, Qt.MouseButton.LeftButton)
 
@@ -356,3 +366,243 @@ def test_ctrl_f_toggles_fullscreen(qtbot: QtBot, open_window: MainWindow) -> Non
 
     assert open_window.panel_toolbar.fullscreen_button.isChecked()
     assert open_window.isFullScreen()
+
+
+class _Pen:
+    def color(self) -> str:
+        return "icon-color"
+
+
+class _Painter:
+    """Small recorder for the geometric arguments passed to QPainter."""
+
+    def __init__(self) -> None:
+        self.paths: list[QPainterPath] = []
+        self.polygons: list[object] = []
+        self.lines: list[tuple[int, int, int, int]] = []
+        self.pixmaps: list[tuple[object, QPixmap]] = []
+        self.fills: list[tuple[object, object]] = []
+        self.clip_paths: list[QPainterPath] = []
+        self.pens: list[object] = []
+        self.save_depth = 0
+
+    def setRenderHint(self, _hint: object) -> None:
+        pass
+
+    def pen(self) -> _Pen:
+        return _Pen()
+
+    def setPen(self, _pen: object) -> None:
+        self.pens.append(_pen)
+
+    def setBrush(self, _brush: object) -> None:
+        pass
+
+    def drawPath(self, path: QPainterPath) -> None:
+        self.paths.append(path)
+
+    def drawPolygon(self, polygon: object) -> None:
+        self.polygons.append(polygon)
+
+    def drawLine(self, x1: int, y1: int, x2: int, y2: int) -> None:
+        self.lines.append((x1, y1, x2, y2))
+
+    def save(self) -> None:
+        self.save_depth += 1
+
+    def restore(self) -> None:
+        self.save_depth -= 1
+
+    def setClipPath(self, path: QPainterPath) -> None:
+        self.clip_paths.append(path)
+
+    def drawPixmap(self, point: object, pixmap: QPixmap) -> None:
+        self.pixmaps.append((point, pixmap))
+
+    def fillRect(self, rect: object, color: object) -> None:
+        self.fills.append((rect, color))
+
+
+def _path_points(path: QPainterPath) -> list[tuple[float, float]]:
+    return [(path.elementAt(i).x, path.elementAt(i).y) for i in range(path.elementCount())]
+
+
+def test_toolbar_icons_keep_their_size_and_point_the_chevrons_outward(qtbot) -> None:
+    undo = UndoButton()
+    redo = RedoButton()
+    qtbot.addWidget(undo)
+    qtbot.addWidget(redo)
+
+    assert undo.size().width() == undo.size().height() == 22
+    assert redo.size().width() == redo.size().height() == 22
+
+    rect = QRect(10, 20, 40, 30)
+    undo_painter = _Painter()
+    redo_painter = _Painter()
+    undo._paint_icon(undo_painter, rect)  # type: ignore[arg-type]
+    redo._paint_icon(redo_painter, rect)  # type: ignore[arg-type]
+
+    assert sum(_path_points(undo_painter.paths[0]), ()) == pytest.approx(
+        (40.2, 23.8, 17.8, 34, 40.2, 44.2)
+    )
+    assert sum(_path_points(redo_painter.paths[0]), ()) == pytest.approx(
+        (17.8, 23.8, 40.2, 34, 17.8, 44.2)
+    )
+
+
+class _EventPainter(_Painter):
+    class RenderHint:
+        Antialiasing = object()
+
+    last: _EventPainter | None = None
+
+    def __init__(self, *_args: object) -> None:
+        super().__init__()
+        _EventPainter.last = self
+
+    def end(self) -> None:
+        pass
+
+
+def test_button_paints_inside_the_five_pixel_icon_margin(
+    qtbot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    button = UndoButton()
+    qtbot.addWidget(button)
+    button.show()
+    qtbot.waitExposed(button)
+    painted_rects: list[QRect] = []
+    monkeypatch.setattr(
+        UndoButton,
+        "_paint_icon",
+        lambda _self, _painter, rect: painted_rects.append(rect),
+    )
+    monkeypatch.setattr(panel_toolbar, "QPainter", _EventPainter)
+
+    button.paintEvent(QPaintEvent(button.rect()))
+
+    assert painted_rects[-1] == QRect(5, 5, 12, 12)
+    painter = _EventPainter.last
+    assert painter is not None
+    assert [pen.widthF() for pen in painter.pens] == [1.5]  # type: ignore[attr-defined]
+
+
+def test_toolbar_layout_keeps_its_spacing_and_side_margins(qtbot) -> None:
+    toolbar = PanelToolbar()
+    qtbot.addWidget(toolbar)
+    layout = toolbar.layout()
+    assert layout is not None
+
+    assert layout.contentsMargins().left() == 8
+    assert layout.contentsMargins().right() == 8
+    assert layout.contentsMargins().top() == layout.contentsMargins().bottom() == 0
+    assert layout.spacing() == 6
+    assert [layout.itemAt(i).widget() for i in range(4)] == [
+        toolbar.undo_button,
+        toolbar.redo_button,
+        toolbar.shuffle_button,
+        toolbar.fullscreen_button,
+    ]
+
+
+def _polygon_points(polygon: object) -> list[tuple[int, int]]:
+    return [(polygon.at(i).x(), polygon.at(i).y()) for i in range(polygon.count())]  # type: ignore[attr-defined]
+
+
+def test_shuffle_icon_draws_shallow_crossing_arrows_with_separated_heads(qtbot) -> None:
+    painter = _Painter()
+    ShuffleButton()._paint_icon(painter, QRect(10, 20, 40, 30))  # type: ignore[arg-type]
+
+    assert len(painter.paths) == 2
+    assert _path_points(painter.paths[0]) == pytest.approx(
+        [(10, 44.36), (23.6, 44.36), (23.6, 24.64), (46, 24.64)]
+    )
+    assert _path_points(painter.paths[1]) == pytest.approx(
+        [(10, 24.64), (23.6, 24.64), (23.6, 44.36), (46, 44.36)]
+    )
+    assert [_polygon_points(polygon) for polygon in painter.polygons] == [
+        [(49, 25), (46, 22), (46, 27)],
+        [(49, 44), (46, 42), (46, 47)],
+    ]
+
+
+def test_fullscreen_icon_draws_eight_corner_arms_of_the_expected_length(qtbot) -> None:
+    painter = _Painter()
+    FullScreenButton()._paint_icon(painter, QRect(1, 2, 19, 16))  # type: ignore[arg-type]
+
+    assert painter.lines == [
+        (1, 7, 1, 2),
+        (1, 2, 6, 2),
+        (14, 2, 19, 2),
+        (19, 2, 19, 7),
+        (1, 12, 1, 17),
+        (1, 17, 6, 17),
+        (14, 17, 19, 17),
+        (19, 17, 19, 12),
+    ]
+
+
+def test_fullscreen_icon_keeps_a_three_pixel_minimum_arm(qtbot) -> None:
+    painter = _Painter()
+    FullScreenButton()._paint_icon(painter, QRect(0, 3, 6, 6))  # type: ignore[arg-type]
+
+    assert painter.lines == [
+        (0, 6, 0, 3),
+        (0, 3, 3, 3),
+        (2, 3, 5, 3),
+        (5, 3, 5, 6),
+        (0, 5, 0, 8),
+        (0, 8, 3, 8),
+        (2, 8, 5, 8),
+        (5, 8, 5, 5),
+    ]
+
+
+def test_fullscreen_icon_uses_addition_for_non_aligned_coordinates(qtbot) -> None:
+    painter = _Painter()
+    FullScreenButton()._paint_icon(painter, QRect(1, 3, 19, 16))  # type: ignore[arg-type]
+
+    assert painter.lines == [
+        (1, 8, 1, 3),
+        (1, 3, 6, 3),
+        (14, 3, 19, 3),
+        (19, 3, 19, 8),
+        (1, 13, 1, 18),
+        (1, 18, 6, 18),
+        (14, 18, 19, 18),
+        (19, 18, 19, 13),
+    ]
+
+
+def test_shuffle_icon_curve_uses_the_offset_from_its_left_edge(qtbot: QtBot) -> None:
+    class _Painter:
+        def __init__(self) -> None:
+            self.paths = []
+
+        def drawPath(self, path) -> None:
+            self.paths.append(path)
+
+        def pen(self):
+            class _Pen:
+                def color(self):
+                    return None
+
+            return _Pen()
+
+        def __getattr__(self, _name: str):
+            return lambda *_args, **_kwargs: None
+
+    button = ShuffleButton()
+    qtbot.addWidget(button)
+    painter = _Painter()
+
+    button._paint_icon(painter, QRect(8, 3, 44, 20))  # noqa: SLF001
+
+    assert painter.paths[0].elementAt(1).x == 23
+
+
+def test_panel_toolbar_keeps_an_expanding_spacer(qtbot: QtBot) -> None:
+    toolbar = PanelToolbar()
+    qtbot.addWidget(toolbar)
+
+    assert toolbar.layout().stretch(4) > 0

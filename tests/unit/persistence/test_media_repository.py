@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import sqlite3
 
 import pytest
 
-from prismic.domain.media import MediaState
+from prismic.domain.media import Media, MediaState
+from prismic.indexing.reconciler import HashedFile, Reconciler
 from prismic.persistence.errors import UnknownMediaError
+from prismic.persistence.repositories import media_repository
 from prismic.persistence.repositories.media_repository import MediaRepository
 
 
@@ -12,14 +16,18 @@ def repository(migrated_connection: sqlite3.Connection) -> MediaRepository:
     return MediaRepository(migrated_connection)
 
 
-def test_create_and_get_round_trip(repository: MediaRepository) -> None:
-    created = repository.create(
+def _create_cat_media(repository: MediaRepository) -> Media:
+    return repository.create(
         relative_path="photos/cat.jpg",
         content_hash="hash-1",
         size=1024,
         mtime=1_700_000_000.0,
         state=MediaState.ACTIVE,
     )
+
+
+def test_create_and_get_round_trip(repository: MediaRepository) -> None:
+    created = _create_cat_media(repository)
 
     fetched = repository.get(created.id)
 
@@ -31,13 +39,7 @@ def test_get_returns_none_for_unknown_id(repository: MediaRepository) -> None:
 
 
 def test_get_by_relative_path(repository: MediaRepository) -> None:
-    created = repository.create(
-        relative_path="photos/cat.jpg",
-        content_hash="hash-1",
-        size=1024,
-        mtime=1_700_000_000.0,
-        state=MediaState.ACTIVE,
-    )
+    created = _create_cat_media(repository)
 
     assert repository.get_by_relative_path("photos/cat.jpg") == created
     assert repository.get_by_relative_path("photos/missing.jpg") is None
@@ -109,3 +111,45 @@ def test_count_reflects_every_row_regardless_of_state(repository: MediaRepositor
     )
 
     assert repository.count() == 2
+
+
+@pytest.mark.parametrize(
+    ("original_path", "scanned_path"),
+    [("photo.jpg", "photo.jpg"), ("old/photo.jpg", "new/photo.jpg")],
+    ids=["restored-at-same-path", "moved-after-missing"],
+)
+def test_previously_missing_media_is_reactivated_without_changing_identity(
+    migrated_connection: sqlite3.Connection,
+    original_path: str,
+    scanned_path: str,
+) -> None:
+    repository = media_repository.MediaRepository(migrated_connection)
+    original = repository.create(
+        relative_path=original_path,
+        content_hash="same-content",
+        size=12,
+        mtime=98.5,
+        state=MediaState.MISSING,
+    )
+    reconciler = Reconciler()
+
+    result = reconciler.reconcile(
+        migrated_connection,
+        reconciler.begin_scan(),
+        [
+            HashedFile(
+                relative_path=scanned_path,
+                content_hash="same-content",
+                size=12,
+                mtime=98.5,
+            )
+        ],
+    )
+
+    restored = repository.get(original.id)
+    assert result.applied is True
+    assert result.moved_count == 1
+    assert restored is not None
+    assert restored.id == original.id
+    assert restored.relative_path == scanned_path
+    assert restored.state is MediaState.ACTIVE

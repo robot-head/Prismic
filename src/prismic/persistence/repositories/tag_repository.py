@@ -6,12 +6,10 @@ import sqlite3
 
 from prismic.domain.tag import Tag, validate_tag_name
 from prismic.persistence.errors import DuplicateTagNameError, UnknownTagError
+from prismic.persistence.repositories._base import SQLiteRepository
 
 
-class TagRepository:
-    def __init__(self, connection: sqlite3.Connection) -> None:
-        self._connection = connection
-
+class TagRepository(SQLiteRepository):
     def create(self, name: str) -> Tag:
         validated = validate_tag_name(name)
         try:

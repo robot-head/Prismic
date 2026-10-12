@@ -32,7 +32,8 @@ from prismic.domain.collection import Collection
 from prismic.domain.media import Media, MediaState
 from prismic.indexing.hashing import hash_file
 from prismic.indexing.scanner import ScannedFile, scan
-from prismic.persistence.repositories.media_repository import MediaRepository
+from prismic.persistence import database
+from prismic.persistence.repositories.media_repository import MediaFields, MediaRepository
 from prismic.persistence.repositories.scan_stats_repository import ScanStatsRepository
 
 # Called as (files_processed_so_far, expected_total) while a scan is under
@@ -112,6 +113,20 @@ class ReconciliationResult:
     missing_count: int = 0
 
 
+def _active_media_fields(file: HashedFile) -> MediaFields:
+    return {
+        "relative_path": file.relative_path,
+        "content_hash": file.content_hash,
+        "size": file.size,
+        "mtime": file.mtime,
+        "state": MediaState.ACTIVE,
+    }
+
+
+def _create_active_media(repository: MediaRepository, file: HashedFile) -> None:
+    repository.create(**_active_media_fields(file))
+
+
 class Reconciler:
     """Tracks scan generations and applies reconciliation results.
 
@@ -162,19 +177,18 @@ class Reconciler:
         self,
         connection: sqlite3.Connection,
         generation: int,
-        hashed_files: Iterable[HashedFile],
+        scan_results: Iterable[HashedFile],
         unreadable_paths: frozenset[str],
     ) -> ReconciliationResult:
         if generation != self._generation:
             return ReconciliationResult(applied=False)
 
         media_repository = MediaRepository(connection)
-        hashed_files = list(hashed_files)
+        hashed_files = list(scan_results)
         existing = media_repository.list_all()
         existing_by_path = {m.relative_path: m for m in existing if m.state == MediaState.ACTIVE}
 
-        connection.execute("BEGIN")
-        try:
+        with database.transaction(connection):
             new_count = 0
             unchanged_count = 0
             changed_count = 0
@@ -188,13 +202,7 @@ class Reconciler:
                     unchanged_count += 1
                 else:
                     self._mark_missing(media_repository, existing_media)
-                    media_repository.create(
-                        relative_path=file.relative_path,
-                        content_hash=file.content_hash,
-                        size=file.size,
-                        mtime=file.mtime,
-                        state=MediaState.ACTIVE,
-                    )
+                    _create_active_media(media_repository, file)
                     changed_count += 1
 
             # Candidates for move-matching: already-missing records, plus
@@ -222,25 +230,12 @@ class Reconciler:
                 if len(candidates) == 1 and len(files) == 1:
                     media = candidates[0]
                     file = files[0]
-                    media_repository.update(
-                        media.id,
-                        relative_path=file.relative_path,
-                        content_hash=file.content_hash,
-                        size=file.size,
-                        mtime=file.mtime,
-                        state=MediaState.ACTIVE,
-                    )
+                    media_repository.update(media.id, **_active_media_fields(file))
                     relinked_media_ids.add(media.id)
                     moved_count += 1
                 else:
                     for file in files:
-                        media_repository.create(
-                            relative_path=file.relative_path,
-                            content_hash=file.content_hash,
-                            size=file.size,
-                            mtime=file.mtime,
-                            state=MediaState.ACTIVE,
-                        )
+                        _create_active_media(media_repository, file)
                         new_count += 1
 
             missing_count = 0
@@ -251,12 +246,6 @@ class Reconciler:
                     continue
                 self._mark_missing(media_repository, media)
                 missing_count += 1
-        except Exception:
-            connection.execute("ROLLBACK")
-            raise
-        else:
-            connection.execute("COMMIT")
-
         return ReconciliationResult(
             applied=True,
             new_count=new_count,

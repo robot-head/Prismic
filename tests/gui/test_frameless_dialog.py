@@ -14,13 +14,20 @@ reports.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
+import PySide6.QtCore as qtcore
+import PySide6.QtGui as qtgui
+import PySide6.QtWidgets as qtwidgets
 import pytest
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, QMargins, QRect, Qt, QTimer
 from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton, QWidget
 from pytestqt.qtbot import QtBot
 
-from prismic.ui.frameless_dialog import MessageDialog, SizeGrip
+from prismic.ui.frameless_dialog import FramelessDialog, MessageDialog, SizeGrip, TitleBar
+from tests.gui._dialog_helpers import message_dialog
+from tests.gui._ui_test_helpers import mouse_event
+from tests.gui.helpers import shown_parent
 
 
 def buttons_of(dialog: MessageDialog) -> list[QPushButton]:
@@ -37,24 +44,41 @@ def buttons_of(dialog: MessageDialog) -> list[QPushButton]:
 # -- Construction --------------------------------------------------------
 
 
-def test_the_dialog_has_no_native_frame(qtbot: QtBot) -> None:
+def _dialog(
+    qtbot: QtBot,
+    *,
+    title: str = "Title",
+    text: str = "Text",
+    buttons: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok,
+    default: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok,
+) -> MessageDialog:
     dialog = MessageDialog(
-        None, "Title", "Text", QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.Ok
+        parent=None,
+        title=title,
+        text=text,
+        buttons=buttons,
+        default=default,
     )
     qtbot.addWidget(dialog)
+    return dialog
+
+
+def _yes_cancel_dialog(qtbot: QtBot) -> MessageDialog:
+    return _dialog(
+        qtbot,
+        buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        default=QMessageBox.StandardButton.Cancel,
+    )
+
+
+def test_the_dialog_has_no_native_frame(qtbot: QtBot) -> None:
+    dialog = _dialog(qtbot)
 
     assert dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
 
 
 def test_the_title_bar_shows_the_given_title(qtbot: QtBot) -> None:
-    dialog = MessageDialog(
-        None,
-        "Could not open collection",
-        "Text",
-        QMessageBox.StandardButton.Ok,
-        QMessageBox.StandardButton.Ok,
-    )
-    qtbot.addWidget(dialog)
+    dialog = _dialog(qtbot, title="Could not open collection")
 
     label = dialog.title_bar.findChild(QLabel, "dialogTitle")
     assert label is not None
@@ -62,14 +86,7 @@ def test_the_title_bar_shows_the_given_title(qtbot: QtBot) -> None:
 
 
 def test_the_body_shows_the_given_text(qtbot: QtBot) -> None:
-    dialog = MessageDialog(
-        None,
-        "Title",
-        "Something went wrong in a way the user needs to know about.",
-        QMessageBox.StandardButton.Ok,
-        QMessageBox.StandardButton.Ok,
-    )
-    qtbot.addWidget(dialog)
+    dialog = _dialog(qtbot, text="Something went wrong in a way the user needs to know about.")
 
     label = dialog.findChild(QLabel, "messageDialogText")
     assert label is not None
@@ -77,37 +94,20 @@ def test_the_body_shows_the_given_text(qtbot: QtBot) -> None:
 
 
 def test_only_the_requested_buttons_are_built(qtbot: QtBot) -> None:
-    dialog = MessageDialog(
-        None,
-        "Title",
-        "Text",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        QMessageBox.StandardButton.Cancel,
-    )
-    qtbot.addWidget(dialog)
+    dialog = _yes_cancel_dialog(qtbot)
 
     assert [button.text() for button in buttons_of(dialog)] == ["Yes", "Cancel"]
 
 
 def test_a_single_button_dialog_builds_just_that_one(qtbot: QtBot) -> None:
-    dialog = MessageDialog(
-        None, "Title", "Text", QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.Ok
-    )
-    qtbot.addWidget(dialog)
+    dialog = _dialog(qtbot)
 
     assert [button.text() for button in buttons_of(dialog)] == ["OK"]
 
 
 def test_the_default_button_is_marked_as_qts_default(qtbot: QtBot) -> None:
     """So Enter fires it, the same as a native QMessageBox."""
-    dialog = MessageDialog(
-        None,
-        "Title",
-        "Text",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        QMessageBox.StandardButton.Cancel,
-    )
-    qtbot.addWidget(dialog)
+    dialog = _yes_cancel_dialog(qtbot)
 
     by_text = {button.text(): button for button in buttons_of(dialog)}
     assert by_text["Cancel"].isDefault()
@@ -118,14 +118,7 @@ def test_the_default_button_is_marked_as_qts_default(qtbot: QtBot) -> None:
 
 
 def test_clicking_a_button_reports_it(qtbot: QtBot) -> None:
-    dialog = MessageDialog(
-        None,
-        "Title",
-        "Text",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        QMessageBox.StandardButton.Cancel,
-    )
-    qtbot.addWidget(dialog)
+    dialog = _yes_cancel_dialog(qtbot)
     yes_button = next(b for b in buttons_of(dialog) if b.text() == "Yes")
 
     qtbot.mouseClick(yes_button, Qt.MouseButton.LeftButton)
@@ -134,35 +127,15 @@ def test_clicking_a_button_reports_it(qtbot: QtBot) -> None:
     assert not dialog.isVisible()
 
 
-def test_escape_reports_the_default_button(qtbot: QtBot) -> None:
-    """Matches `QMessageBox`'s own convention: closing some way other
-    than a button click falls back to whichever button was default."""
-    dialog = MessageDialog(
-        None,
-        "Title",
-        "Text",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        QMessageBox.StandardButton.Cancel,
-    )
-    qtbot.addWidget(dialog)
+@pytest.mark.parametrize("dismissal", ["escape", "title-bar"], ids=["escape", "title-bar-close"])
+def test_dismissal_reports_the_default_button(qtbot: QtBot, dismissal: str) -> None:
+    """Matches QMessageBox: dismissal without a choice returns the default."""
+    dialog = _yes_cancel_dialog(qtbot)
 
-    qtbot.keyClick(dialog, Qt.Key.Key_Escape)
-
-    assert dialog.clicked_button == QMessageBox.StandardButton.Cancel
-    assert not dialog.isVisible()
-
-
-def test_the_title_bar_close_button_also_reports_the_default(qtbot: QtBot) -> None:
-    dialog = MessageDialog(
-        None,
-        "Title",
-        "Text",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        QMessageBox.StandardButton.Cancel,
-    )
-    qtbot.addWidget(dialog)
-
-    qtbot.mouseClick(dialog.title_bar.close_button, Qt.MouseButton.LeftButton)
+    if dismissal == "escape":
+        qtbot.keyClick(dialog, Qt.Key.Key_Escape)
+    else:
+        qtbot.mouseClick(dialog.title_bar.close_button, Qt.MouseButton.LeftButton)
 
     assert dialog.clicked_button == QMessageBox.StandardButton.Cancel
     assert not dialog.isVisible()
@@ -188,13 +161,10 @@ def intercept(
 
     def capture_init(
         self: MessageDialog,
-        parent: QWidget | None,
-        title: str,
-        text: str,
-        buttons: QMessageBox.StandardButton,
-        default: QMessageBox.StandardButton,
+        *args: Any,
+        **kwargs: Any,
     ) -> None:
-        original_init(self, parent, title, text, buttons, default)
+        original_init(self, *args, **kwargs)
         seen.append(self)
         qtbot.addWidget(self)
         QTimer.singleShot(0, lambda: on_shown(self))
@@ -219,18 +189,24 @@ def test_question_defaults_to_yes_and_cancel(qtbot: QtBot, monkeypatch: pytest.M
     assert [b.text() for b in buttons_of(seen[0])] == ["Yes", "Cancel"]
 
 
-def test_warning_shows_only_an_ok_button(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("show_dialog", "title", "text"),
+    [
+        (MessageDialog.warning, "Could not create tag", "A tag by that name already exists."),
+        (MessageDialog.critical, "Could not open collection", "Boom."),
+    ],
+    ids=["warning", "critical"],
+)
+def test_warning_and_critical_show_only_an_ok_button(
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    show_dialog: Callable[[QWidget | None, str, str], None],
+    title: str,
+    text: str,
+) -> None:
     seen = intercept(monkeypatch, qtbot, lambda dialog: dialog.accept())
 
-    MessageDialog.warning(None, "Could not create tag", "A tag by that name already exists.")
-
-    assert [b.text() for b in buttons_of(seen[0])] == ["OK"]
-
-
-def test_critical_shows_only_an_ok_button(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
-    seen = intercept(monkeypatch, qtbot, lambda dialog: dialog.accept())
-
-    MessageDialog.critical(None, "Could not open collection", "Boom.")
+    show_dialog(None, title, text)
 
     assert [b.text() for b in buttons_of(seen[0])] == ["OK"]
 
@@ -240,15 +216,9 @@ def test_critical_shows_only_an_ok_button(qtbot: QtBot, monkeypatch: pytest.Monk
 
 
 def test_a_parented_message_dialog_positions_itself_before_it_is_shown(qtbot: QtBot) -> None:
-    parent = QWidget()
-    qtbot.addWidget(parent)
-    parent.resize(1200, 800)
-    parent.show()
-    qtbot.waitExposed(parent)
+    parent = shown_parent(qtbot, 1200, 800)
 
-    dialog = MessageDialog(
-        parent, "Title", "Text", QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.Ok
-    )
+    dialog = message_dialog(parent)
     qtbot.addWidget(dialog)
 
     assert dialog.testAttribute(Qt.WidgetAttribute.WA_Moved)
@@ -257,9 +227,215 @@ def test_a_parented_message_dialog_positions_itself_before_it_is_shown(qtbot: Qt
 def test_a_message_dialog_has_no_resize_grip(qtbot: QtBot) -> None:
     """Unlike Settings, a message box's size follows its text -- there's
     nothing for a resize handle to usefully do here."""
-    dialog = MessageDialog(
-        None, "Title", "Text", QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.Ok
-    )
+    dialog = message_dialog()
     qtbot.addWidget(dialog)
 
     assert dialog.findChild(SizeGrip) is None
+
+
+def test_parented_message_dialog_centers_over_parent_before_showing(qtbot: QtBot) -> None:
+    parent = shown_parent(qtbot, 420, 260, position=qtcore.QPoint(100, 120))
+
+    dialog = message_dialog(parent)
+
+    assert dialog.frameGeometry().center() == parent.frameGeometry().center()
+
+
+def test_parented_message_dialog_clamps_its_frame_to_the_screen(qtbot: QtBot) -> None:
+    parent = shown_parent(qtbot, 320, 220)
+    available = parent.screen().availableGeometry()
+    parent.move(available.right() - 20, available.bottom() - 20)
+
+    dialog = message_dialog(parent)
+    qtbot.addWidget(dialog)
+
+    frame = dialog.frameGeometry()
+    assert available.contains(frame)
+    assert frame.right() == available.right() - 1
+    assert frame.bottom() == available.bottom() - 1
+
+
+def test_resizable_frameless_dialog_keeps_its_grip_inside_the_lower_right_corner(
+    qtbot: QtBot,
+) -> None:
+    dialog = FramelessDialog("Resizable", resizable=True)
+    qtbot.addWidget(dialog)
+    dialog.resize(320, 240)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    grip = dialog._size_grip  # noqa: SLF001
+    assert grip is not None
+    assert grip.size() == qtcore.QSize(16, 16)
+    assert grip.pos() == qtcore.QPoint(
+        dialog.width() - grip.width() - 1, dialog.height() - grip.height() - 1
+    )
+
+    dialog.resize(500, 360)
+    qtbot.waitUntil(
+        lambda: (
+            grip.pos()
+            == qtcore.QPoint(dialog.width() - grip.width() - 1, dialog.height() - grip.height() - 1)
+        )
+    )
+
+
+def test_size_grip_draws_the_three_diagonals_in_its_lower_right_corner(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = FramelessDialog("Resizable", resizable=True)
+    qtbot.addWidget(dialog)
+    grip = dialog._size_grip  # noqa: SLF001
+    assert grip is not None
+    lines: list[tuple[int, int, int, int]] = []
+
+    class RecordingPainter:
+        RenderHint = qtgui.QPainter.RenderHint
+
+        def __init__(self, _widget: qtwidgets.QWidget) -> None:
+            pass
+
+        def setRenderHint(self, *_args: object) -> None:
+            pass
+
+        def setPen(self, *_args: object) -> None:
+            pass
+
+        def drawLine(self, x1: int, y1: int, x2: int, y2: int) -> None:
+            lines.append((x1, y1, x2, y2))
+
+    monkeypatch.setattr("prismic.ui.frameless_dialog.QPainter", RecordingPainter)
+    grip.paintEvent(None)  # type: ignore[arg-type]
+
+    assert lines == [(14, 13, 13, 14), (14, 9, 9, 14), (14, 5, 5, 14)]
+
+
+def test_message_dialog_keeps_its_layout_and_minimum_width_contract(qtbot: QtBot) -> None:
+    dialog = MessageDialog(
+        None,
+        "Title",
+        "A message with enough text to wrap when it needs to.",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        QMessageBox.StandardButton.Yes,
+    )
+    qtbot.addWidget(dialog)
+
+    outer = dialog.layout()
+    assert outer is not None
+    body = outer.itemAt(1).layout()
+    assert body is not None
+    button_row = body.itemAt(1).layout()
+    assert button_row is not None
+    text = dialog.findChild(QLabel, "messageDialogText")
+    assert text is not None
+
+    assert dialog.minimumWidth() == 360
+    assert dialog.isModal()
+    assert text.maximumWidth() == 420
+    assert text.wordWrap()
+    assert outer.contentsMargins() == QMargins(0, 0, 0, 0)
+    assert outer.spacing() == 0
+    assert body.contentsMargins() == QMargins(20, 16, 20, 16)
+    assert body.spacing() == 16
+    assert button_row.spacing() == 8
+    assert dialog.title_bar.layout().contentsMargins() == QMargins(14, 0, 0, 0)
+    assert dialog.title_bar.layout().spacing() == 0
+
+    buttons = buttons_of(dialog)
+    assert [button.text() for button in buttons] == ["Yes", "Cancel"]
+    assert buttons[0].isDefault()
+    assert not buttons[1].isDefault()
+
+
+def test_frameless_dialog_centering_accounts_for_frame_margins(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = FramelessDialog("Title")
+    qtbot.addWidget(dialog)
+
+    class FrameHandle:
+        def frameMargins(self) -> QMargins:
+            return QMargins(4, 8, 6, 12)
+
+    class Screen:
+        def availableGeometry(self) -> QRect:
+            return QRect(0, 0, 1000, 800)
+
+    class ParentWindow:
+        def window(self) -> ParentWindow:
+            return self
+
+        def frameGeometry(self) -> QRect:
+            return QRect(201, 161, 100, 80)
+
+        def screen(self) -> Screen:
+            return Screen()
+
+    monkeypatch.setattr(dialog, "parentWidget", lambda: ParentWindow())
+    monkeypatch.setattr(dialog, "create", lambda: None)
+    monkeypatch.setattr(dialog, "windowHandle", lambda: FrameHandle())
+    monkeypatch.setattr(dialog, "width", lambda: 100)
+    monkeypatch.setattr(dialog, "height", lambda: 60)
+    positions: list[tuple[int, int]] = []
+    monkeypatch.setattr(dialog, "move", lambda x, y: positions.append((x, y)))
+
+    dialog._center_on_parent()
+
+    assert positions == [(200, 169)]
+
+
+@pytest.mark.parametrize(
+    ("move_result", "has_handle", "left_accepted", "expected_calls"),
+    [(True, True, True, 1), (False, True, False, 1), (False, False, False, 0)],
+    ids=["move-started", "move-denied", "no-handle"],
+)
+def test_title_bar_starts_system_move_only_for_a_left_press(
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    move_result: bool,
+    has_handle: bool,
+    left_accepted: bool,
+    expected_calls: int,
+) -> None:
+    title_bar = TitleBar("Title")
+    qtbot.addWidget(title_bar)
+    title_bar.show()
+    calls: list[None] = []
+
+    class MoveHandle:
+        def startSystemMove(self) -> bool:
+            calls.append(None)
+            return move_result
+
+    handle = MoveHandle() if has_handle else None
+
+    class WindowStub:
+        def windowHandle(self) -> MoveHandle | None:
+            return handle
+
+    monkeypatch.setattr(title_bar, "window", lambda: WindowStub())
+    event = mouse_event(QEvent.Type.MouseButtonPress, Qt.MouseButton.LeftButton)
+    event.ignore()
+
+    title_bar.mousePressEvent(event)
+
+    assert len(calls) == expected_calls
+    assert event.isAccepted() is left_accepted
+
+    right_press = mouse_event(QEvent.Type.MouseButtonPress, Qt.MouseButton.RightButton)
+    right_press.ignore()
+    title_bar.mousePressEvent(right_press)
+
+    assert len(calls) == expected_calls
+    assert not right_press.isAccepted()
+
+
+def test_title_bar_swallows_double_clicks(qtbot: QtBot) -> None:
+    title_bar = TitleBar("Title")
+    qtbot.addWidget(title_bar)
+    event = mouse_event(QEvent.Type.MouseButtonDblClick, Qt.MouseButton.LeftButton)
+    event.ignore()
+
+    title_bar.mouseDoubleClickEvent(event)
+
+    assert event.isAccepted()

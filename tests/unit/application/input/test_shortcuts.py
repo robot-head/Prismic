@@ -1,9 +1,11 @@
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
 
 from prismic.application.input import shortcuts
 from prismic.application.input.shortcuts import (
+    QUICK_SELECT_SLOT_COUNT,
     SHORTCUTS,
     ShortcutBindings,
     ShortcutScope,
@@ -15,6 +17,15 @@ from prismic.persistence.preferences import PreferencesStore
 @pytest.fixture
 def bindings(tmp_path: Path) -> ShortcutBindings:
     return ShortcutBindings(PreferencesStore(tmp_path / "preferences.json"))
+
+
+def _custom_open_collection_binding(
+    tmp_path: Path,
+) -> tuple[PreferencesStore, ShortcutBindings]:
+    store = PreferencesStore(tmp_path / "preferences.json")
+    bindings = ShortcutBindings(store)
+    bindings.set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "F5")
+    return store, bindings
 
 
 # -- The registry itself ----------------------------------------------------
@@ -31,6 +42,11 @@ def test_every_shortcut_has_a_label_and_a_description() -> None:
     for definition in SHORTCUTS:
         assert definition.label.strip(), definition.id
         assert definition.description.strip(), definition.id
+
+
+def test_shortcut_definitions_are_immutable() -> None:
+    with pytest.raises(FrozenInstanceError):
+        SHORTCUTS[0].label = "changed"  # type: ignore[misc]
 
 
 def test_categories_group_contiguously() -> None:
@@ -64,6 +80,11 @@ def test_focus_mode_and_play_pause_share_space_across_scopes(
 def test_every_quick_select_slot_has_a_shortcut(bindings: ShortcutBindings) -> None:
     for slot in range(shortcuts.QUICK_SELECT_SLOT_COUNT):
         assert bindings.binding(shortcuts.quick_select_id(slot))
+
+
+def test_quick_select_ids_are_one_based() -> None:
+    for slot in range(shortcuts.QUICK_SELECT_SLOT_COUNT):
+        assert shortcuts.quick_select_id(slot) == f"tagging.quick_select_{slot + 1}"
 
 
 def test_quick_select_defaults_are_the_digit_row(bindings: ShortcutBindings) -> None:
@@ -195,6 +216,31 @@ def test_shortcut_for_only_searches_the_requested_scope(bindings: ShortcutBindin
     assert bindings.shortcut_for("Space", ShortcutScope.VIEWER) == shortcuts.VIEWER_PLAY_PAUSE
 
 
+def test_binding_lookups_compare_equal_strings_by_value(bindings: ShortcutBindings) -> None:
+    shortcut_binding = "Ctrl+Shift+F9"
+    bindings.set_binding(shortcuts.OPEN_SETTINGS, shortcut_binding)
+    bindings.set_binding(shortcuts.quick_select_id(0), shortcut_binding)
+    equal_binding = ("!" + shortcut_binding)[1:]
+    assert equal_binding == shortcut_binding
+    assert equal_binding is not shortcut_binding
+
+    assert bindings.shortcut_for(equal_binding) == shortcuts.OPEN_SETTINGS
+    assert bindings.quick_select_slot(equal_binding) == 0
+
+
+def test_conflicts_excludes_an_equal_shortcut_id_by_value(bindings: ShortcutBindings) -> None:
+    shortcut_id = shortcuts.OPEN_COLLECTION_FOLDER
+    equal_id = ("!" + shortcut_id)[1:]
+    assert equal_id == shortcut_id
+    assert equal_id is not shortcut_id
+
+    assert bindings.conflicts(equal_id, bindings.binding(shortcut_id)) == ()
+
+
+def test_definitions_is_exposed_as_a_property(bindings: ShortcutBindings) -> None:
+    assert bindings.definitions is SHORTCUTS
+
+
 def test_conflicts_reports_another_shortcut_on_the_same_key(
     bindings: ShortcutBindings,
 ) -> None:
@@ -245,8 +291,7 @@ def test_a_modifier_binding_collides_with_another_like_any_other_key(
 
 
 def test_overrides_survive_a_reload(tmp_path: Path) -> None:
-    store = PreferencesStore(tmp_path / "preferences.json")
-    ShortcutBindings(store).set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "F5")
+    store, _bindings = _custom_open_collection_binding(tmp_path)
 
     assert ShortcutBindings(store).binding(shortcuts.OPEN_COLLECTION_FOLDER) == "F5"
 
@@ -255,18 +300,13 @@ def test_only_overrides_are_written_not_the_whole_table(tmp_path: Path) -> None:
     """So a changed default reaches everyone who hadn't customized that
     particular shortcut, instead of being frozen at whatever the table
     said the first time the app ran."""
-    store = PreferencesStore(tmp_path / "preferences.json")
-    bindings = ShortcutBindings(store)
-
-    bindings.set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "F5")
+    store, _bindings = _custom_open_collection_binding(tmp_path)
 
     assert store.load()["shortcuts"] == {shortcuts.OPEN_COLLECTION_FOLDER: "F5"}
 
 
 def test_resetting_the_last_override_removes_the_section_entirely(tmp_path: Path) -> None:
-    store = PreferencesStore(tmp_path / "preferences.json")
-    bindings = ShortcutBindings(store)
-    bindings.set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "F5")
+    store, bindings = _custom_open_collection_binding(tmp_path)
 
     bindings.reset(shortcuts.OPEN_COLLECTION_FOLDER)
 
@@ -308,3 +348,25 @@ def test_a_malformed_shortcuts_section_is_ignored(tmp_path: Path) -> None:
     store.save({"shortcuts": "not a mapping"})
 
     assert ShortcutBindings(store).binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
+
+
+@pytest.mark.parametrize(
+    "slot",
+    range(QUICK_SELECT_SLOT_COUNT),
+    ids=lambda slot: f"slot-{slot + 1}",
+)
+def test_quick_select_definitions_number_every_slot_and_explain_typing_once(slot: int) -> None:
+    definition = shortcuts.definition(shortcuts.quick_select_id(slot))
+    number = slot + 1
+
+    assert definition.label == f"Toggle numbered tag {number}"
+    assert f"numbers {number} " in definition.description
+    assert definition.description.startswith(
+        f"Toggle whichever tag the Edit list currently numbers {number} "
+    )
+    assert ("Type the key instead of toggling" in definition.description) is (slot == 0)
+    assert ("Still works while a tag search box has focus" in definition.description) is (slot == 0)
+
+
+def test_keycaps_parse_multiple_modifiers_in_noncanonical_order() -> None:
+    assert keycaps("Alt+Ctrl+Shift+K") == ("Alt", "Ctrl", "Shift", "K")

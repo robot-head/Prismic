@@ -1,24 +1,30 @@
+import pytest
+
 from prismic.application.state import ApplicationState
 from prismic.domain.media import MediaState
 from prismic.persistence.repositories.mapping_repository import MappingRepository
 from prismic.persistence.repositories.media_repository import MediaRepository
+from tests.unit._media_support import add_active_media
 
 
-def _add_active_media(media: MediaRepository, relative_path: str) -> int:
-    return media.create(
-        relative_path=relative_path,
-        content_hash=relative_path,
-        size=1,
-        mtime=1.0,
-        state=MediaState.ACTIVE,
-    ).id
+def _add_active_media_items(media: MediaRepository, *relative_paths: str) -> tuple[int, ...]:
+    return tuple(add_active_media(media, path) for path in relative_paths)
+
+
+def _state_with_active_media(
+    media: MediaRepository, mappings: MappingRepository, *relative_paths: str
+) -> tuple[ApplicationState, tuple[int, ...]]:
+    ids = _add_active_media_items(media, *relative_paths)
+    state = ApplicationState()
+    state.recompute(media, mappings)
+    return state, ids
 
 
 def test_zero_tags_makes_all_active_media_eligible_in_path_order(
     media: MediaRepository, mappings: MappingRepository
 ) -> None:
-    _add_active_media(media, "z.jpg")
-    _add_active_media(media, "a.jpg")
+    add_active_media(media, "z.jpg")
+    add_active_media(media, "a.jpg")
     media.create(
         relative_path="missing.jpg",
         content_hash="missing",
@@ -38,11 +44,7 @@ def test_zero_tags_makes_all_active_media_eligible_in_path_order(
 def test_current_item_unchanged_when_it_survives(
     media: MediaRepository, mappings: MappingRepository
 ) -> None:
-    a = _add_active_media(media, "a.jpg")
-    _add_active_media(media, "b.jpg")
-
-    state = ApplicationState()
-    state.recompute(media, mappings)
+    state, (a, _b) = _state_with_active_media(media, mappings, "a.jpg", "b.jpg")
     state.current_item = a
 
     state.recompute(media, mappings)
@@ -53,7 +55,7 @@ def test_current_item_unchanged_when_it_survives(
 def test_current_item_none_stays_none_even_with_results(
     media: MediaRepository, mappings: MappingRepository
 ) -> None:
-    _add_active_media(media, "a.jpg")
+    add_active_media(media, "a.jpg")
 
     state = ApplicationState()
     assert state.current_item is None
@@ -66,10 +68,7 @@ def test_current_item_none_stays_none_even_with_results(
 def test_current_item_moves_to_nearest_surviving_item(
     media: MediaRepository, mappings: MappingRepository
 ) -> None:
-    a = _add_active_media(media, "a.jpg")
-    b = _add_active_media(media, "b.jpg")
-    d = _add_active_media(media, "d.jpg")
-    e = _add_active_media(media, "e.jpg")
+    a, b, d, e = _add_active_media_items(media, "a.jpg", "b.jpg", "d.jpg", "e.jpg")
     removed = max(a, b, d, e) + 1000  # stands in for an item deleted since the last scan
 
     state = ApplicationState()
@@ -85,6 +84,13 @@ def test_current_item_moves_to_nearest_surviving_item(
     assert state.current_item == d
 
 
+def test_nearest_surviving_search_includes_the_first_item_at_any_distance() -> None:
+    state = ApplicationState(result_set=[10])
+
+    assert state._resolve_current_item([10, 20], 20) == 10
+    assert state._resolve_current_item([10, 20, 30, 40], 40) == 10
+
+
 def test_current_item_falls_back_to_first_result_when_no_neighbor_survives(
     media: MediaRepository, mappings: MappingRepository
 ) -> None:
@@ -92,7 +98,7 @@ def test_current_item_falls_back_to_first_result_when_no_neighbor_survives(
     state.result_set = [1, 2, 3]
     state.current_item = 2
 
-    kept = _add_active_media(media, "kept.jpg")
+    kept = add_active_media(media, "kept.jpg")
 
     state.recompute(media, mappings)
 
@@ -125,12 +131,7 @@ def test_selected_items_defaults_to_empty(
 def test_selected_items_survives_a_recompute_when_still_eligible(
     media: MediaRepository, mappings: MappingRepository
 ) -> None:
-    a = _add_active_media(media, "a.jpg")
-    b = _add_active_media(media, "b.jpg")
-    c = _add_active_media(media, "c.jpg")
-
-    state = ApplicationState()
-    state.recompute(media, mappings)
+    state, (a, b, c) = _state_with_active_media(media, mappings, "a.jpg", "b.jpg", "c.jpg")
     state.current_item = a
     state.selected_items = frozenset({a, b, c})
 
@@ -142,8 +143,8 @@ def test_selected_items_survives_a_recompute_when_still_eligible(
 def test_selected_items_drops_an_id_that_leaves_the_result_set(
     media: MediaRepository, mappings: MappingRepository
 ) -> None:
-    a = _add_active_media(media, "a.jpg")
-    b = _add_active_media(media, "b.jpg")
+    a = add_active_media(media, "a.jpg")
+    b = add_active_media(media, "b.jpg")
     removed = max(a, b) + 1000  # stands in for an item deleted since the last scan
 
     state = ApplicationState()
@@ -163,7 +164,7 @@ def test_current_item_is_always_included_in_selected_items(
     outside `selected_items`, even if nothing had explicitly added it
     (e.g. after `_resolve_current_item` reassigns it to a fresh item with
     no selection of its own yet)."""
-    a = _add_active_media(media, "a.jpg")
+    a = add_active_media(media, "a.jpg")
 
     state = ApplicationState()
     state.result_set = [1]
@@ -174,3 +175,37 @@ def test_current_item_is_always_included_in_selected_items(
 
     assert state.current_item == a
     assert state.selected_items == frozenset({a})
+
+
+@pytest.mark.parametrize(
+    ("previous_order", "previous_current", "result_set", "expected"),
+    [
+        ([10, 20, 30, 40, 50], 40, [30, 50], 50),
+        ([10, 20, 30, 40, 50], 40, [20, 30], 30),
+        ([10, 20, 30, 40], 30, [10, 20], 20),
+        ([10, 20, 30, 40], 40, [10], 10),
+        ([99, 10, 20, 30, 40], 99, [20, 40], 20),
+    ],
+    ids=[
+        "forward-wins-equal-distance",
+        "nearest-backward",
+        "backward-xor-boundary",
+        "far-backward",
+        "negative-index-does-not-wrap",
+    ],
+)
+def test_current_item_fallback_search_uses_neighbor_positions(
+    previous_order: list[int],
+    previous_current: int,
+    result_set: list[int],
+    expected: int,
+) -> None:
+    state = ApplicationState(result_set=result_set)
+
+    assert state._resolve_current_item(previous_order, previous_current) == expected
+
+
+def test_current_item_fallback_uses_the_first_new_result() -> None:
+    state = ApplicationState(result_set=[40, 50])
+
+    assert state._resolve_current_item([10, 20, 30], 20) == 40

@@ -4,44 +4,47 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from prismic.application.commands.base import Command, CommandContext
+from prismic.application.commands import _support
 from prismic.application.errors import UnknownMappingError
-from prismic.persistence.errors import UnknownMediaError, UnknownTagError
+from prismic.persistence.errors import UnknownMediaError
 
 
 @dataclass
-class MappingAddCommand(Command):
+class _SingleMappingCommand(_support.Command):
     media_id: int
     tag_id: int
 
-    def execute(self, context: CommandContext) -> None:
+    def _set_mapping(self, context: _support.CommandContext, *, adding: bool) -> None:
+        operation = context.mappings.add if adding else context.mappings.remove
+        operation(self.media_id, self.tag_id)
+
+
+@dataclass
+class MappingAddCommand(_SingleMappingCommand):
+    def execute(self, context: _support.CommandContext) -> None:
         if context.media.get(self.media_id) is None:
             raise UnknownMediaError(self.media_id)
-        if context.tags.get(self.tag_id) is None:
-            raise UnknownTagError(self.tag_id)
-        context.mappings.add(self.media_id, self.tag_id)
+        _support.require_tag(context, self.tag_id)
+        self._set_mapping(context, adding=True)
 
-    def undo(self, context: CommandContext) -> None:
-        context.mappings.remove(self.media_id, self.tag_id)
+    def undo(self, context: _support.CommandContext) -> None:
+        self._set_mapping(context, adding=False)
 
 
 @dataclass
-class MappingRemoveCommand(Command):
-    media_id: int
-    tag_id: int
-
-    def execute(self, context: CommandContext) -> None:
+class MappingRemoveCommand(_SingleMappingCommand):
+    def execute(self, context: _support.CommandContext) -> None:
         existing_tag_ids = {tag.id for tag in context.mappings.tags_for_media(self.media_id)}
         if self.tag_id not in existing_tag_ids:
             raise UnknownMappingError(self.media_id, self.tag_id)
-        context.mappings.remove(self.media_id, self.tag_id)
+        self._set_mapping(context, adding=False)
 
-    def undo(self, context: CommandContext) -> None:
-        context.mappings.add(self.media_id, self.tag_id)
+    def undo(self, context: _support.CommandContext) -> None:
+        self._set_mapping(context, adding=True)
 
 
 @dataclass
-class MappingSetForManyCommand(Command):
+class MappingSetForManyCommand(_support.Command):
     """Adds or removes `tag_id` across every id in `media_ids`, each
     according to its *own* current state -- the multi-select tag-toggle
     case: "check this tag" must add it only to whichever selected files
@@ -58,9 +61,8 @@ class MappingSetForManyCommand(Command):
     adding: bool
     _changed_media_ids: list[int] = field(default_factory=list, init=False, repr=False)
 
-    def execute(self, context: CommandContext) -> None:
-        if context.tags.get(self.tag_id) is None:
-            raise UnknownTagError(self.tag_id)
+    def execute(self, context: _support.CommandContext) -> None:
+        _support.require_tag(context, self.tag_id)
         self._changed_media_ids = []
         for media_id in self.media_ids:
             has_it = self.tag_id in {t.id for t in context.mappings.tags_for_media(media_id)}
@@ -71,7 +73,7 @@ class MappingSetForManyCommand(Command):
                 context.mappings.remove(media_id, self.tag_id)
                 self._changed_media_ids.append(media_id)
 
-    def undo(self, context: CommandContext) -> None:
+    def undo(self, context: _support.CommandContext) -> None:
         for media_id in self._changed_media_ids:
             if self.adding:
                 context.mappings.remove(media_id, self.tag_id)

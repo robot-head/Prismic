@@ -21,7 +21,7 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
 )
-from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -64,6 +64,7 @@ from prismic.persistence.errors import (
     DuplicateTagNameError,
     PersistenceError,
 )
+from prismic.ui._shortcuts import portable_key_sequence
 from prismic.ui.column_splitter import ColumnSplitter
 from prismic.ui.frameless_dialog import MessageDialog
 from prismic.ui.future_watcher import FutureWatcher
@@ -87,6 +88,7 @@ from prismic.ui.tag_model import CheckedRole, CheckedSlotRole, UncheckedSlotRole
 from prismic.ui.tag_panel import TagPanel
 from prismic.ui.thumbnail_delegate import ThumbnailDelegate
 from prismic.ui.thumbnail_provider import ThumbnailProvider
+from prismic.ui.thumbnail_services import ThumbnailServices
 from prismic.ui.transient_message_bar import TransientMessageBar
 from prismic.ui.viewer import MediaViewer
 
@@ -289,9 +291,11 @@ class MainWindow(QMainWindow):
         self.result_list.viewport().setMouseTracking(True)
         self.result_list.setModel(self.result_model)
         self._thumbnail_delegate = ThumbnailDelegate(
-            self.thumbnail_provider,
+            ThumbnailServices(
+                self.thumbnail_provider,
+                lambda: self.session.worker_pool if self.session is not None else None,
+            ),
             self._resolve_media_path,
-            lambda: self.session.worker_pool if self.session is not None else None,
             self.result_list,
         )
         self.result_list.setItemDelegate(self._thumbnail_delegate)
@@ -312,8 +316,10 @@ class MainWindow(QMainWindow):
         )
         self.viewer.load_error.connect(self._on_viewer_error)
         self.selection_grid = SelectionGridView(
-            self.grid_thumbnail_provider,
-            lambda: self.session.worker_pool if self.session is not None else None,
+            ThumbnailServices(
+                self.grid_thumbnail_provider,
+                lambda: self.session.worker_pool if self.session is not None else None,
+            )
         )
         # Swaps between the single-item viewer and the multi-select grid --
         # see `_show_current_media` -- rather than the viewer sitting
@@ -502,11 +508,7 @@ class MainWindow(QMainWindow):
         stale key left behind in a menu entry or a hover hint."""
         for shortcut_id, action in self._shortcut_actions.items():
             binding = self._bindings.binding(shortcut_id)
-            action.setShortcut(
-                QKeySequence(binding, QKeySequence.SequenceFormat.PortableText)
-                if binding
-                else QKeySequence()
-            )
+            action.setShortcut(portable_key_sequence(binding))
         self._focus_mode_action.setText(self._menu_text("Focus Mode", shortcuts.FOCUS_MODE))
         self._tag_shortcut_mode_action.setText(
             self._menu_text("Number Selected Tags Instead", shortcuts.SWAP_TAG_NUMBERING)
@@ -790,8 +792,7 @@ class MainWindow(QMainWindow):
     def _common_tag_ids(self, media_ids: frozenset[int]) -> frozenset[int]:
         assert self.session is not None
         tag_id_sets = [
-            {t.id for t in self.session.mappings.tags_for_media(media_id)}
-            for media_id in media_ids
+            {t.id for t in self.session.mappings.tags_for_media(media_id)} for media_id in media_ids
         ]
         return frozenset(set.intersection(*tag_id_sets)) if tag_id_sets else frozenset()
 
@@ -977,9 +978,7 @@ class MainWindow(QMainWindow):
         )
         current_index = selection_model.currentIndex()
         current_id = (
-            self.result_model.data(current_index, MediaIdRole)
-            if current_index.isValid()
-            else None
+            self.result_model.data(current_index, MediaIdRole) if current_index.isValid() else None
         )
         if not isinstance(current_id, int) or current_id not in selected_ids:
             # Qt's own current index (the keyboard-focus rectangle) doesn't

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 
+# Declaration order is the dispatch precedence below.
 class InputContext(Enum):
     TEXT_EDITING = auto()
     """A text-entry widget has focus (e.g. renaming a tag) — it gets first

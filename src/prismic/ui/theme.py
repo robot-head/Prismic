@@ -208,11 +208,13 @@ QToolButton#panelToolbarButton::menu-indicator {{
 
 /* -- Buttons ---------------------------------------------------------------- */
 
-QPushButton {{
+QPushButton, QLineEdit {{
     background: {BG_PANEL_RAISED};
     color: {TEXT_PRIMARY};
     border: 1px solid {BORDER};
     border-radius: 6px;
+}}
+QPushButton {{
     padding: 5px 12px;
     font-size: 12px;
 }}
@@ -246,10 +248,6 @@ QPushButton#playPauseButton:hover {{
 /* -- Text inputs (rename/create dialogs, etc.) ------------------------------ */
 
 QLineEdit {{
-    background: {BG_PANEL_RAISED};
-    color: {TEXT_PRIMARY};
-    border: 1px solid {BORDER};
-    border-radius: 6px;
     padding: 5px 8px;
     selection-background-color: {ACCENT};
 }}

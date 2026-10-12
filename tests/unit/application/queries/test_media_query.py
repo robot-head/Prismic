@@ -27,48 +27,38 @@ def test_zero_tags_returns_all_active_media_in_path_order(
     assert [m.relative_path for m in result] == ["a.jpg", "z.jpg"]
 
 
-def test_one_tag_returns_only_media_mapped_to_it(
-    media: MediaRepository, mappings: MappingRepository, tags: TagRepository
+@pytest.mark.parametrize(
+    ("second_tag", "expected_paths"),
+    [(None, ["beach.jpg"]), ("summer", ["beach.jpg"]), ("work", [])],
+    ids=["one-tag", "multiple-tag-intersection", "empty-intersection"],
+)
+def test_tag_filters_return_only_media_matching_every_selected_tag(
+    media: MediaRepository,
+    mappings: MappingRepository,
+    tags: TagRepository,
+    second_tag: str | None,
+    expected_paths: list[str],
 ) -> None:
     beach = _add_media(media, "beach.jpg")
-    _add_media(media, "unrelated.jpg")
     vacation = tags.create("vacation")
     mappings.add(beach, vacation.id)
+    query_ids = [vacation.id]
 
-    result = eligible_media(media, mappings, [vacation.id])
+    if second_tag is None:
+        _add_media(media, "unrelated.jpg")
+    else:
+        mountain = _add_media(media, "mountain.jpg")
+        other = tags.create(second_tag)
+        query_ids.append(other.id)
+        if second_tag == "summer":
+            mappings.add(beach, other.id)
+            mappings.add(mountain, vacation.id)
+        else:
+            mappings.add(mountain, other.id)
 
-    assert [m.relative_path for m in result] == ["beach.jpg"]
+    result = eligible_media(media, mappings, query_ids)
 
-
-def test_multiple_tags_is_an_intersection(
-    media: MediaRepository, mappings: MappingRepository, tags: TagRepository
-) -> None:
-    beach = _add_media(media, "beach.jpg")
-    mountain = _add_media(media, "mountain.jpg")
-    vacation = tags.create("vacation")
-    summer = tags.create("summer")
-    mappings.add(beach, vacation.id)
-    mappings.add(beach, summer.id)
-    mappings.add(mountain, vacation.id)
-
-    result = eligible_media(media, mappings, [vacation.id, summer.id])
-
-    assert [m.relative_path for m in result] == ["beach.jpg"]
-
-
-def test_empty_intersection_is_an_empty_result_not_an_error(
-    media: MediaRepository, mappings: MappingRepository, tags: TagRepository
-) -> None:
-    beach = _add_media(media, "beach.jpg")
-    mountain = _add_media(media, "mountain.jpg")
-    vacation = tags.create("vacation")
-    work = tags.create("work")
-    mappings.add(beach, vacation.id)
-    mappings.add(mountain, work.id)
-
-    result = eligible_media(media, mappings, [vacation.id, work.id])
-
-    assert result == []
+    assert [item.relative_path for item in result] == expected_paths
 
 
 def test_missing_media_is_never_eligible_even_when_tagged(

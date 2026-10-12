@@ -12,13 +12,6 @@ from prismic.persistence import database, migrations
 from prismic.ui.main_window import MainWindow
 
 
-@pytest.fixture
-def window(qtbot: QtBot) -> MainWindow:
-    win = MainWindow()
-    qtbot.addWidget(win)
-    return win
-
-
 def _patch_critical(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     shown: list[str] = []
     monkeypatch.setattr(
@@ -26,6 +19,12 @@ def _patch_critical(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         lambda *args, **kwargs: shown.append(args[-1]),
     )
     return shown
+
+
+def _assert_failed_open(window: MainWindow, root: Path, shown: list[str]) -> None:
+    window.open_collection(root)
+    assert window.session is None
+    assert len(shown) == 1
 
 
 def test_incompatible_schema_version_shows_an_error_not_a_crash(
@@ -40,10 +39,7 @@ def test_incompatible_schema_version_shows_an_error_not_a_crash(
 
     shown = _patch_critical(monkeypatch)
 
-    window.open_collection(root)
-
-    assert window.session is None
-    assert len(shown) == 1
+    _assert_failed_open(window, root, shown)
 
 
 def test_opening_a_collection_already_locked_elsewhere_shows_an_error(
@@ -57,10 +53,7 @@ def test_opening_a_collection_already_locked_elsewhere_shows_an_error(
     try:
         shown = _patch_critical(monkeypatch)
 
-        window.open_collection(root)
-
-        assert window.session is None
-        assert len(shown) == 1
+        _assert_failed_open(window, root, shown)
     finally:
         holder.close()
 

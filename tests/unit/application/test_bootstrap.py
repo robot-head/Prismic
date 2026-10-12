@@ -1,0 +1,83 @@
+import sys
+from pathlib import Path
+
+import pytest
+
+import prismic
+from prismic import bootstrap
+
+
+@pytest.mark.parametrize(
+    ("supplied", "expected_path"),
+    [
+        (["prismic", "trip.prismic"], Path("trip.prismic")),
+        (["prismic"], None),
+        ([], None),
+    ],
+)
+def test_run_uses_only_an_optional_second_argument_as_the_collection_path(
+    monkeypatch, supplied: list[str], expected_path: Path | None
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _Application:
+        def __init__(self, args: list[str]) -> None:
+            captured["args"] = args
+
+        def setOrganizationName(self, _name: str) -> None:
+            pass
+
+        def setApplicationName(self, _name: str) -> None:
+            pass
+
+        def setWindowIcon(self, _icon: object) -> None:
+            pass
+
+        def setStyleSheet(self, _style: str) -> None:
+            pass
+
+        def exec(self) -> int:
+            return 17
+
+    class _Window:
+        def __init__(self, initial_path: Path | None) -> None:
+            captured["initial_path"] = initial_path
+
+        def show(self) -> None:
+            captured["shown"] = True
+
+    monkeypatch.setattr(bootstrap, "QApplication", _Application)
+    monkeypatch.setattr(bootstrap, "MainWindow", _Window)
+    monkeypatch.setattr(bootstrap, "QIcon", lambda _path: object())
+
+    result = bootstrap.run(supplied)
+
+    assert result == 17
+    assert captured["args"] is supplied
+    assert captured["initial_path"] == expected_path
+    assert captured["shown"] is True
+
+
+def test_icon_path_points_to_the_bundled_application_icon() -> None:
+    from prismic.assets import ICON_PATH
+
+    assert ICON_PATH.name == "prismic.ico"
+    assert ICON_PATH.parent.name == "icon"
+    assert ICON_PATH.is_file()
+
+
+def test_entrypoint_runs_when_name_is_equal_but_not_identical(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exit_codes: list[int] = []
+    monkeypatch.setattr(bootstrap, "run", lambda: 23)
+    monkeypatch.setattr(sys, "exit", exit_codes.append)
+    entrypoint = Path(prismic.__file__).with_name("__main__.py")
+    source = entrypoint.read_text(encoding="utf-8")
+    script_name = "".join(("__", "main__"))
+
+    assert script_name == "__main__"
+    assert id(script_name) != id(sys.intern("__main__"))
+    exec(compile(source, str(entrypoint), "exec"), {"__name__": script_name})
+
+    assert exit_codes == [23]

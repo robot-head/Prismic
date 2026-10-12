@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import TypedDict, Unpack
 
 from prismic.domain.media import Media, MediaState
 from prismic.persistence.errors import UnknownMediaError
+from prismic.persistence.repositories._base import SQLiteRepository
+
+
+class MediaFields(TypedDict):
+    relative_path: str
+    content_hash: str
+    size: int
+    mtime: float
+    state: MediaState
 
 
 def _row_to_media(row: sqlite3.Row) -> Media:
-    return Media(
-        id=row["id"],
+    return _make_media(
+        media_id=row["id"],
         relative_path=row["relative_path"],
         content_hash=row["content_hash"],
         size=row["size"],
@@ -19,10 +29,14 @@ def _row_to_media(row: sqlite3.Row) -> Media:
     )
 
 
-class MediaRepository:
-    def __init__(self, connection: sqlite3.Connection) -> None:
-        self._connection = connection
+def _make_media(
+    media_id: int,
+    **fields: Unpack[MediaFields],
+) -> Media:
+    return Media(id=media_id, **fields)
 
+
+class MediaRepository(SQLiteRepository):
     def create(
         self,
         relative_path: str,
@@ -40,8 +54,8 @@ class MediaRepository:
         )
         media_id = cursor.lastrowid
         assert media_id is not None
-        return Media(
-            id=media_id,
+        return _make_media(
+            media_id,
             relative_path=relative_path,
             content_hash=content_hash,
             size=size,
@@ -68,12 +82,7 @@ class MediaRepository:
     def update(
         self,
         media_id: int,
-        *,
-        relative_path: str,
-        content_hash: str,
-        size: int,
-        mtime: float,
-        state: MediaState,
+        **fields: Unpack[MediaFields],
     ) -> Media:
         cursor = self._connection.execute(
             """
@@ -81,17 +90,24 @@ class MediaRepository:
             SET relative_path = ?, content_hash = ?, size = ?, mtime = ?, state = ?
             WHERE id = ?
             """,
-            (relative_path, content_hash, size, mtime, state.value, media_id),
+            (
+                fields["relative_path"],
+                fields["content_hash"],
+                fields["size"],
+                fields["mtime"],
+                fields["state"].value,
+                media_id,
+            ),
         )
         if cursor.rowcount == 0:
             raise UnknownMediaError(media_id)
-        return Media(
-            id=media_id,
-            relative_path=relative_path,
-            content_hash=content_hash,
-            size=size,
-            mtime=mtime,
-            state=state,
+        return _make_media(
+            media_id,
+            relative_path=fields["relative_path"],
+            content_hash=fields["content_hash"],
+            size=fields["size"],
+            mtime=fields["mtime"],
+            state=fields["state"],
         )
 
     def list_all(self) -> list[Media]:

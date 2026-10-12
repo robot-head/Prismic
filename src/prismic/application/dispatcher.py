@@ -14,6 +14,7 @@ from collections.abc import Callable
 from prismic.application.commands.base import Command, CommandContext
 from prismic.application.history import History
 from prismic.application.state import ApplicationState
+from prismic.persistence import database
 from prismic.persistence.repositories.mapping_repository import MappingRepository
 from prismic.persistence.repositories.media_repository import MediaRepository
 from prismic.persistence.repositories.tag_repository import TagRepository
@@ -68,12 +69,6 @@ class CommandDispatcher:
         context = CommandContext(
             tags=self._tags, media=self._media, mappings=self._mappings, state=self._state
         )
-        self._connection.execute("BEGIN")
-        try:
+        with database.transaction(self._connection):
             apply(context)
-        except Exception:
-            self._connection.execute("ROLLBACK")
-            raise
-        else:
-            self._connection.execute("COMMIT")
         self._state.recompute(self._media, self._mappings)

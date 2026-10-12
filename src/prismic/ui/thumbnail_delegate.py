@@ -19,15 +19,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRectF, QSize, Qt
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
-from prismic.application.worker_pool import WorkerPool
-from prismic.media.formats import SUPPORTED_VIDEO_EXTENSIONS
 from prismic.ui import theme
+from prismic.ui._delegate_painting import draw_elided_item_text, paint_selection_wash
+from prismic.ui._thumbnail_badge import paint_thumbnail
 from prismic.ui.result_model import MediaIdRole
-from prismic.ui.thumbnail_provider import ThumbnailProvider
+from prismic.ui.thumbnail_services import ThumbnailServices
 
 _Index = QModelIndex | QPersistentModelIndex
 
@@ -40,15 +40,13 @@ _MARGIN = 8
 class ThumbnailDelegate(QStyledItemDelegate):
     def __init__(
         self,
-        provider: ThumbnailProvider,
+        thumbnails: ThumbnailServices,
         resolve_path: Callable[[int], Path | None],
-        worker_pool: Callable[[], WorkerPool | None],
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self._provider = provider
+        self._thumbnails = thumbnails
         self._resolve_path = resolve_path
-        self._worker_pool = worker_pool
         # Off by default -- thumbnails cost a decode per file, and the
         # plain filename list is the lighter-weight, always-available
         # option (View > Show Thumbnails opts in). Toggled by MainWindow;
@@ -73,10 +71,7 @@ class ThumbnailDelegate(QStyledItemDelegate):
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
 
-        if selected:
-            painter.fillRect(rect, QColor(theme.SELECTED_WASH))
-        elif hovered:
-            painter.fillRect(rect, QColor(theme.HOVER_WASH))
+        paint_selection_wash(painter, rect, selected=selected, hovered=hovered)
 
         if self.show_thumbnails:
             thumb_rect = QRectF(
@@ -92,11 +87,7 @@ class ThumbnailDelegate(QStyledItemDelegate):
 
         text_rect = QRectF(text_x, rect.y(), rect.right() - text_x - _MARGIN, rect.height())
         painter.setPen(QPen(QColor(theme.TEXT_PRIMARY)))
-        metrics = painter.fontMetrics()
-        elided = metrics.elidedText(name, Qt.TextElideMode.ElideMiddle, int(text_rect.width()))
-        painter.drawText(
-            text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided
-        )
+        draw_elided_item_text(painter, name, text_rect, int(text_rect.width()))
 
         painter.restore()
 
@@ -106,51 +97,35 @@ class ThumbnailDelegate(QStyledItemDelegate):
         painter.save()
         painter.setClipPath(path)
 
-        pixmap = self._provider.get(media_id)
-        is_video = Path(name).suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS
+        pixmap = self._thumbnails.provider.get(media_id)
+        is_video = self._thumbnails.is_video(name)
 
+        scaled_pixmap = None
+        draw_position = None
         if pixmap is not None:
-            scaled = pixmap.scaled(
+            scaled_pixmap = pixmap.scaled(
                 rect.size().toSize(),
                 Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                 Qt.TransformationMode.SmoothTransformation,
             )
-            x_off = rect.x() - (scaled.width() - rect.width()) / 2
-            y_off = rect.y() - (scaled.height() - rect.height()) / 2
-            painter.drawPixmap(int(x_off), int(y_off), scaled)
-            if is_video:
-                self._paint_play_badge(painter, rect)
-        else:
-            painter.fillRect(rect, QColor(theme.THUMB_PLACEHOLDER))
-            if is_video:
-                self._paint_play_badge(painter, rect)
-            elif not self._provider.has_failed(media_id):
-                self._request_thumbnail(media_id, name)
+            x_off = rect.x() - (scaled_pixmap.width() - rect.width()) / 2
+            y_off = rect.y() - (scaled_pixmap.height() - rect.height()) / 2
+            draw_position = QPoint(int(x_off), int(y_off))
+
+        paint_thumbnail(
+            painter=painter,
+            rect=rect,
+            scaled_pixmap=scaled_pixmap,
+            draw_position=draw_position,
+            is_video=is_video,
+        )
+        if pixmap is None and not is_video and not self._thumbnails.provider.has_failed(media_id):
+            self._request_thumbnail(media_id, name)
 
         painter.restore()
 
-    def _paint_play_badge(self, painter: QPainter, rect: QRectF) -> None:
-        center = rect.center()
-        radius = min(rect.width(), rect.height()) * 0.26
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(theme.THUMB_VIDEO_BADGE))
-        painter.drawEllipse(center, radius, radius)
-        triangle = QPainterPath()
-        side = radius * 0.9
-        triangle.moveTo(center.x() - side * 0.35, center.y() - side * 0.5)
-        triangle.lineTo(center.x() - side * 0.35, center.y() + side * 0.5)
-        triangle.lineTo(center.x() + side * 0.55, center.y())
-        triangle.closeSubpath()
-        painter.setBrush(QColor(theme.TEXT_PRIMARY))
-        painter.drawPath(triangle)
-
     def _request_thumbnail(self, media_id: int, name: str) -> None:
-        if Path(name).suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
-            return
-        pool = self._worker_pool()
-        if pool is None:
-            return
         path = self._resolve_path(media_id)
         if path is None:
             return
-        self._provider.request(media_id, path, pool)
+        self._thumbnails.request(media_id, path)

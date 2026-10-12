@@ -31,17 +31,15 @@ when the cell actually grew past what's cached.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPaintEvent
 from PySide6.QtWidgets import QWidget
 
-from prismic.application.worker_pool import WorkerPool
-from prismic.media.formats import SUPPORTED_VIDEO_EXTENSIONS
 from prismic.ui import theme
-from prismic.ui.thumbnail_provider import ThumbnailProvider
+from prismic.ui._thumbnail_badge import paint_thumbnail
+from prismic.ui.thumbnail_services import ThumbnailServices
 
 _MARGIN = 12
 _SPACING = 6
@@ -59,17 +57,15 @@ don't care about sizing still have a sane value."""
 class SelectionGridView(QWidget):
     def __init__(
         self,
-        provider: ThumbnailProvider,
-        worker_pool: Callable[[], WorkerPool | None],
+        thumbnails: ThumbnailServices,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("selectionGrid")
-        self._provider = provider
-        self._worker_pool = worker_pool
+        self._thumbnails = thumbnails
         self._items: list[tuple[int, Path]] = []
-        self._provider.thumbnail_ready.connect(self._on_thumbnail_event)
-        self._provider.decode_failed.connect(self._on_thumbnail_event)
+        self._thumbnails.provider.thumbnail_ready.connect(self._on_thumbnail_event)
+        self._thumbnails.provider.decode_failed.connect(self._on_thumbnail_event)
 
     def set_items(self, items: list[tuple[int, Path]]) -> None:
         """`items` is (media_id, absolute_path) pairs, in display order."""
@@ -104,9 +100,11 @@ class SelectionGridView(QWidget):
         painter.save()
         painter.setClipPath(clip)
 
-        pixmap = self._provider.get(media_id)
-        is_video = path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS
+        pixmap = self._thumbnails.provider.get(media_id)
+        is_video = self._thumbnails.is_video(path)
 
+        scaled_pixmap = None
+        logical_position = None
         if pixmap is not None:
             ratio = self.devicePixelRatioF()
             # Scale to the cell's *physical* pixel size (logical size times
@@ -118,57 +116,39 @@ class SelectionGridView(QWidget):
             # own `devicePixelRatio` is what tells Qt those extra pixels are
             # real detail, not something to stretch.
             physical_size = (rect.size() * ratio).toSize()
-            scaled = pixmap.scaled(
+            scaled_pixmap = pixmap.scaled(
                 physical_size,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
-            scaled.setDevicePixelRatio(ratio)
-            logical_size = scaled.deviceIndependentSize()
+            scaled_pixmap.setDevicePixelRatio(ratio)
+            logical_size = scaled_pixmap.deviceIndependentSize()
             x_off = rect.x() + (rect.width() - logical_size.width()) / 2
             y_off = rect.y() + (rect.height() - logical_size.height()) / 2
-            painter.drawPixmap(QPointF(x_off, y_off), scaled)
-        else:
-            painter.fillRect(rect, QColor(theme.THUMB_PLACEHOLDER))
+            logical_position = QPointF(x_off, y_off)
 
-        if is_video:
-            self._paint_play_badge(painter, rect)
-        elif not self._provider.has_failed(media_id):
+        paint_thumbnail(
+            painter=painter,
+            rect=rect,
+            scaled_pixmap=scaled_pixmap,
+            draw_position=logical_position,
+            is_video=is_video,
+            size_fraction=0.16,
+        )
+
+        if not is_video and not self._thumbnails.provider.has_failed(media_id):
             # Requested every paint, not just when `pixmap is None`: a cell
             # that already has a thumbnail may still be under-resolution
             # for its *current* size (the window grew, or the selection
             # shrank to fewer, larger cells) -- `ThumbnailProvider.request`
             # is a no-op once the cached decode already meets this size.
-            self._request_thumbnail(media_id, path, self._required_dimension(rect))
+            self._thumbnails.request(media_id, path, self._required_dimension(rect))
 
         painter.restore()
 
     def _required_dimension(self, rect: QRectF) -> int:
         ratio = self.devicePixelRatioF()
         return max(1, math.ceil(max(rect.width(), rect.height()) * ratio))
-
-    def _paint_play_badge(self, painter: QPainter, rect: QRectF) -> None:
-        center = rect.center()
-        radius = min(rect.width(), rect.height()) * 0.16
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(theme.THUMB_VIDEO_BADGE))
-        painter.drawEllipse(center, radius, radius)
-        triangle = QPainterPath()
-        side = radius * 0.9
-        triangle.moveTo(center.x() - side * 0.35, center.y() - side * 0.5)
-        triangle.lineTo(center.x() - side * 0.35, center.y() + side * 0.5)
-        triangle.lineTo(center.x() + side * 0.55, center.y())
-        triangle.closeSubpath()
-        painter.setBrush(QColor(theme.TEXT_PRIMARY))
-        painter.drawPath(triangle)
-
-    def _request_thumbnail(self, media_id: int, path: Path, dimension: int) -> None:
-        if path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
-            return
-        pool = self._worker_pool()
-        if pool is None:
-            return
-        self._provider.request(media_id, path, pool, dimension)
 
 
 def _best_grid(count: int, width: int, height: int) -> tuple[int, float, float]:
