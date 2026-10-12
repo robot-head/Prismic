@@ -1,4 +1,3 @@
-from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -9,6 +8,7 @@ import prismic.domain.tag as tag_domain
 import prismic.indexing.reconciler as reconciler
 import prismic.indexing.scanner as scanner
 import prismic.media.loader as loader
+from tests.unit._record_contracts import assert_frozen_and_slotted
 
 
 @pytest.mark.parametrize(
@@ -60,7 +60,4 @@ import prismic.media.loader as loader
     ],
 )
 def test_value_records_are_frozen_and_slotted(record: object, field: str) -> None:
-    with pytest.raises(FrozenInstanceError):
-        setattr(record, field, "changed")
-
-    assert not hasattr(record, "__dict__")
+    assert_frozen_and_slotted(record, field=field)

@@ -177,14 +177,14 @@ class Reconciler:
         self,
         connection: sqlite3.Connection,
         generation: int,
-        hashed_files: Iterable[HashedFile],
+        scan_results: Iterable[HashedFile],
         unreadable_paths: frozenset[str],
     ) -> ReconciliationResult:
         if generation != self._generation:
             return ReconciliationResult(applied=False)
 
         media_repository = MediaRepository(connection)
-        hashed_files = list(hashed_files)
+        hashed_files = list(scan_results)
         existing = media_repository.list_all()
         existing_by_path = {m.relative_path: m for m in existing if m.state == MediaState.ACTIVE}
 

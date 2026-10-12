@@ -4,45 +4,12 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import QEvent, QModelIndex, QPointF, QRect, Qt
-from PySide6.QtGui import QKeyEvent, QMouseEvent
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QListView, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 from pytestqt.qtbot import QtBot
 
 from tests.gui import _tag_model_support as model_support
-
-
-class _Font:
-    def __init__(self) -> None:
-        self.pixel_size = 12
-        self.bold = False
-
-    def setPixelSize(self, size: int) -> None:
-        self.pixel_size = size
-
-    def setBold(self, bold: bool) -> None:
-        self.bold = bold
-
-
-class _Metrics:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, Qt.TextElideMode, int]] = []
-
-    def elidedText(self, text: str, mode: Qt.TextElideMode, width: int) -> str:
-        self.calls.append((text, mode, width))
-        return text
-
-
-class _Painter(model_support.RecordingCalls):
-    def __init__(self) -> None:
-        super().__init__()
-        self.metrics = _Metrics()
-        self.font_value = _Font()
-
-    def fontMetrics(self) -> _Metrics:
-        return self.metrics
-
-    def font(self) -> _Font:
-        return self.font_value
+from tests.gui._mutation_helpers import RecordingPainter, left_mouse_release_at
 
 
 def _delegate(
@@ -102,7 +69,7 @@ def test_shortcut_paint_uses_checked_or_unchecked_slots_and_elides_long_labels(
     view, delegate = _delegate(qtbot, show_shortcuts=True)
     model = _model()
     delegate.set_shortcut_labels({1: "F11"})
-    painter = _Painter()
+    painter = RecordingPainter()
     option = _paint_option(QRect(0, 0, 240, 32))
 
     checked_index = model.index(2, 0)
@@ -122,7 +89,7 @@ def test_shortcut_paint_uses_checked_or_unchecked_slots_and_elides_long_labels(
     unchecked_index = model.index(3, 0)
     assert unchecked_index.data(model_support.UncheckedSlotRole) == 1
     delegate.set_show_checked_shortcuts(False)
-    painter = _Painter()
+    painter = RecordingPainter()
     delegate.paint(painter, option, unchecked_index)
     assert painter.calls_for("drawText")[0][2] == "F1"
 
@@ -162,7 +129,7 @@ def test_checked_and_hovered_paint_states_use_the_expected_background_and_checkb
     _view, delegate = _delegate(qtbot)
     model = _model()
     row_rect = QRect(0, 0, 240, 32)
-    checked_painter = _Painter()
+    checked_painter = RecordingPainter()
     delegate.paint(checked_painter, _paint_option(row_rect, hovered=True), model.index(0, 0))
 
     assert checked_painter.calls_for("fillRect")
@@ -170,7 +137,7 @@ def test_checked_and_hovered_paint_states_use_the_expected_background_and_checkb
     assert len(checked_painter.calls_for("drawPath")) == 1  # hover pencil only
     assert len(checked_painter.calls_for("drawText")) == 1
 
-    unchecked_painter = _Painter()
+    unchecked_painter = RecordingPainter()
     delegate.paint(unchecked_painter, _paint_option(row_rect, hovered=True), model.index(1, 0))
     assert len(unchecked_painter.calls_for("drawPath")) == 2  # outline and hover pencil
     assert unchecked_painter.calls_for("fillPath") == []
@@ -181,14 +148,7 @@ def test_checked_and_hovered_paint_states_use_the_expected_background_and_checkb
 def test_editor_event_rejects_bad_ids_and_non_release_events(qtbot: QtBot) -> None:
     _view, delegate = _delegate(qtbot)
     option = _paint_option(QRect(0, 0, 220, 32))
-    release = QMouseEvent(
-        QEvent.Type.MouseButtonRelease,
-        QPointF(40, 16),
-        QPointF(40, 16),
-        Qt.MouseButton.LeftButton,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
+    release = left_mouse_release_at(QPointF(40, 16))
 
     class InvalidIndex:
         def data(self, role: int) -> object:

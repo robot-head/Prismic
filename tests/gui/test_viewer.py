@@ -4,31 +4,25 @@ from PySide6.QtMultimedia import QMediaPlayer
 from pytestqt.qtbot import QtBot
 
 from prismic.ui.viewer import MediaViewer
+from tests.gui._viewer_helpers import assert_viewer_empty, show_media
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "media"
 
 
-def _show_media(qtbot: QtBot, path: Path) -> MediaViewer:
-    viewer = MediaViewer()
-    qtbot.addWidget(viewer)
-    viewer.show_media(path)
-    return viewer
-
-
 def _show_gif(qtbot: QtBot, path: Path, frame_count: int) -> MediaViewer:
     _gif(path, frame_count)
-    return _show_media(qtbot, path)
+    return show_media(qtbot, path)
 
 
 def test_shows_image_for_a_supported_image_path(qtbot: QtBot) -> None:
-    viewer = _show_media(qtbot, FIXTURES_DIR / "supported_image.png")
+    viewer = show_media(qtbot, FIXTURES_DIR / "supported_image.png")
 
     assert viewer.is_showing_image is True
     assert viewer.is_showing_video is False
 
 
 def test_shows_video_for_a_webm_path(qtbot: QtBot) -> None:
-    viewer = _show_media(qtbot, FIXTURES_DIR / "supported_video.webm")
+    viewer = show_media(qtbot, FIXTURES_DIR / "supported_video.webm")
 
     assert viewer.is_showing_video is True
     assert viewer.is_showing_image is False
@@ -41,12 +35,11 @@ def test_corrupt_image_emits_load_error_and_shows_nothing(qtbot: QtBot) -> None:
     with qtbot.waitSignal(viewer.load_error, timeout=2000):
         viewer.show_media(FIXTURES_DIR / "corrupt_image.jpg")
 
-    assert viewer.is_showing_image is False
-    assert viewer.is_showing_video is False
+    assert_viewer_empty(viewer)
 
 
 def test_toggle_playback_starts_and_pauses_video(qtbot: QtBot) -> None:
-    viewer = _show_media(qtbot, FIXTURES_DIR / "supported_video.webm")
+    viewer = show_media(qtbot, FIXTURES_DIR / "supported_video.webm")
     qtbot.waitUntil(lambda: viewer.video_player.duration_ms > 0, timeout=5000)
 
     viewer.toggle_playback()
@@ -63,12 +56,11 @@ def test_toggle_playback_starts_and_pauses_video(qtbot: QtBot) -> None:
 
 
 def test_clear_resets_to_the_empty_state(qtbot: QtBot) -> None:
-    viewer = _show_media(qtbot, FIXTURES_DIR / "supported_image.png")
+    viewer = show_media(qtbot, FIXTURES_DIR / "supported_image.png")
 
     viewer.clear()
 
-    assert viewer.is_showing_image is False
-    assert viewer.is_showing_video is False
+    assert_viewer_empty(viewer)
     assert viewer.current_path is None
 
 

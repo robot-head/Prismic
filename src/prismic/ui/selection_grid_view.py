@@ -103,8 +103,8 @@ class SelectionGridView(QWidget):
         pixmap = self._thumbnails.provider.get(media_id)
         is_video = self._thumbnails.is_video(path)
 
-        scaled = None
-        position = None
+        scaled_pixmap = None
+        logical_position = None
         if pixmap is not None:
             ratio = self.devicePixelRatioF()
             # Scale to the cell's *physical* pixel size (logical size times
@@ -116,22 +116,22 @@ class SelectionGridView(QWidget):
             # own `devicePixelRatio` is what tells Qt those extra pixels are
             # real detail, not something to stretch.
             physical_size = (rect.size() * ratio).toSize()
-            scaled = pixmap.scaled(
+            scaled_pixmap = pixmap.scaled(
                 physical_size,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
-            scaled.setDevicePixelRatio(ratio)
-            logical_size = scaled.deviceIndependentSize()
+            scaled_pixmap.setDevicePixelRatio(ratio)
+            logical_size = scaled_pixmap.deviceIndependentSize()
             x_off = rect.x() + (rect.width() - logical_size.width()) / 2
             y_off = rect.y() + (rect.height() - logical_size.height()) / 2
-            position = QPointF(x_off, y_off)
+            logical_position = QPointF(x_off, y_off)
 
         paint_thumbnail(
             painter=painter,
             rect=rect,
-            scaled_pixmap=scaled,
-            draw_position=position,
+            scaled_pixmap=scaled_pixmap,
+            draw_position=logical_position,
             is_video=is_video,
             size_fraction=0.16,
         )

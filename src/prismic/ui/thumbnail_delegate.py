@@ -100,23 +100,23 @@ class ThumbnailDelegate(QStyledItemDelegate):
         pixmap = self._thumbnails.provider.get(media_id)
         is_video = self._thumbnails.is_video(name)
 
-        scaled = None
-        position = None
+        scaled_pixmap = None
+        draw_position = None
         if pixmap is not None:
-            scaled = pixmap.scaled(
+            scaled_pixmap = pixmap.scaled(
                 rect.size().toSize(),
                 Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                 Qt.TransformationMode.SmoothTransformation,
             )
-            x_off = rect.x() - (scaled.width() - rect.width()) / 2
-            y_off = rect.y() - (scaled.height() - rect.height()) / 2
-            position = QPoint(int(x_off), int(y_off))
+            x_off = rect.x() - (scaled_pixmap.width() - rect.width()) / 2
+            y_off = rect.y() - (scaled_pixmap.height() - rect.height()) / 2
+            draw_position = QPoint(int(x_off), int(y_off))
 
         paint_thumbnail(
             painter=painter,
             rect=rect,
-            scaled_pixmap=scaled,
-            draw_position=position,
+            scaled_pixmap=scaled_pixmap,
+            draw_position=draw_position,
             is_video=is_video,
         )
         if pixmap is None and not is_video and not self._thumbnails.provider.has_failed(media_id):

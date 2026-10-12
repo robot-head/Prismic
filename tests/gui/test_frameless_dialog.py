@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton
+from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton, QWidget
 from pytestqt.qtbot import QtBot
 
 from prismic.ui.frameless_dialog import MessageDialog, SizeGrip
@@ -123,21 +123,15 @@ def test_clicking_a_button_reports_it(qtbot: QtBot) -> None:
     assert not dialog.isVisible()
 
 
-def test_escape_reports_the_default_button(qtbot: QtBot) -> None:
-    """Matches `QMessageBox`'s own convention: closing some way other
-    than a button click falls back to whichever button was default."""
+@pytest.mark.parametrize("dismissal", ["escape", "title-bar"], ids=["escape", "title-bar-close"])
+def test_dismissal_reports_the_default_button(qtbot: QtBot, dismissal: str) -> None:
+    """Matches QMessageBox: dismissal without a choice returns the default."""
     dialog = _yes_cancel_dialog(qtbot)
 
-    qtbot.keyClick(dialog, Qt.Key.Key_Escape)
-
-    assert dialog.clicked_button == QMessageBox.StandardButton.Cancel
-    assert not dialog.isVisible()
-
-
-def test_the_title_bar_close_button_also_reports_the_default(qtbot: QtBot) -> None:
-    dialog = _yes_cancel_dialog(qtbot)
-
-    qtbot.mouseClick(dialog.title_bar.close_button, Qt.MouseButton.LeftButton)
+    if dismissal == "escape":
+        qtbot.keyClick(dialog, Qt.Key.Key_Escape)
+    else:
+        qtbot.mouseClick(dialog.title_bar.close_button, Qt.MouseButton.LeftButton)
 
     assert dialog.clicked_button == QMessageBox.StandardButton.Cancel
     assert not dialog.isVisible()
@@ -191,18 +185,24 @@ def test_question_defaults_to_yes_and_cancel(qtbot: QtBot, monkeypatch: pytest.M
     assert [b.text() for b in buttons_of(seen[0])] == ["Yes", "Cancel"]
 
 
-def test_warning_shows_only_an_ok_button(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("show_dialog", "title", "text"),
+    [
+        (MessageDialog.warning, "Could not create tag", "A tag by that name already exists."),
+        (MessageDialog.critical, "Could not open collection", "Boom."),
+    ],
+    ids=["warning", "critical"],
+)
+def test_warning_and_critical_show_only_an_ok_button(
+    qtbot: QtBot,
+    monkeypatch: pytest.MonkeyPatch,
+    show_dialog: Callable[[QWidget | None, str, str], None],
+    title: str,
+    text: str,
+) -> None:
     seen = intercept(monkeypatch, qtbot, lambda dialog: dialog.accept())
 
-    MessageDialog.warning(None, "Could not create tag", "A tag by that name already exists.")
-
-    assert [b.text() for b in buttons_of(seen[0])] == ["OK"]
-
-
-def test_critical_shows_only_an_ok_button(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
-    seen = intercept(monkeypatch, qtbot, lambda dialog: dialog.accept())
-
-    MessageDialog.critical(None, "Could not open collection", "Boom.")
+    show_dialog(None, title, text)
 
     assert [b.text() for b in buttons_of(seen[0])] == ["OK"]
 

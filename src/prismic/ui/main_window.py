@@ -21,7 +21,7 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
 )
-from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -64,6 +64,7 @@ from prismic.persistence.errors import (
     DuplicateTagNameError,
     PersistenceError,
 )
+from prismic.ui._shortcuts import portable_key_sequence
 from prismic.ui.column_splitter import ColumnSplitter
 from prismic.ui.frameless_dialog import MessageDialog
 from prismic.ui.future_watcher import FutureWatcher
@@ -507,11 +508,7 @@ class MainWindow(QMainWindow):
         stale key left behind in a menu entry or a hover hint."""
         for shortcut_id, action in self._shortcut_actions.items():
             binding = self._bindings.binding(shortcut_id)
-            action.setShortcut(
-                QKeySequence(binding, QKeySequence.SequenceFormat.PortableText)
-                if binding
-                else QKeySequence()
-            )
+            action.setShortcut(portable_key_sequence(binding))
         self._focus_mode_action.setText(self._menu_text("Focus Mode", shortcuts.FOCUS_MODE))
         self._tag_shortcut_mode_action.setText(
             self._menu_text("Number Selected Tags Instead", shortcuts.SWAP_TAG_NUMBERING)

@@ -7,6 +7,7 @@ import os
 import sqlite3
 import stat
 from concurrent.futures import Future
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,41 +34,77 @@ from tests._reconciliation_test_context import ReconciliationTestContext
 from tests.unit._lockfile_helpers import load_windows_lockfile
 
 
+@dataclass(frozen=True, slots=True)
+class _MediaSeed:
+    relative_path: str
+    content_hash: str
+    mtime: float
+
+
 def _hashed_file(relative_path: str, content_hash: str) -> HashedFile:
     return HashedFile(relative_path=relative_path, content_hash=content_hash, size=1, mtime=10.5)
 
 
+def _cache_records(
+    *,
+    cache_size: int,
+    persisted_size: int,
+    cache_mtime: float,
+    persisted_mtime: float,
+    content_hash: str,
+    state: MediaState = MediaState.ACTIVE,
+) -> tuple[ScannedFile, Media]:
+    scanned = ScannedFile(
+        relative_path="photo.jpg",
+        absolute_path=Path("photo.jpg"),
+        size=cache_size,
+        mtime=cache_mtime,
+    )
+    recorded = Media(
+        id=1,
+        relative_path="photo.jpg",
+        content_hash=content_hash,
+        size=persisted_size,
+        mtime=persisted_mtime,
+        state=state,
+    )
+    return scanned, recorded
+
+
+def _create_active_seed(repository: MediaRepository, seed: _MediaSeed) -> Media:
+    return repository.create(
+        relative_path=seed.relative_path,
+        content_hash=seed.content_hash,
+        size=1,
+        mtime=seed.mtime,
+        state=MediaState.ACTIVE,
+    )
+
+
 def _reconcile_with_files(
-    connection: sqlite3.Connection, reconciler: Reconciler, files: list[HashedFile]
+    connection: sqlite3.Connection,
+    reconciler: Reconciler,
+    files: list[HashedFile],
+    *,
+    unreadable_paths: frozenset[str] = frozenset(),
 ) -> ReconciliationResult:
-    return reconciler.reconcile(connection, reconciler.begin_scan(), files)
+    return reconciler.reconcile(
+        connection,
+        reconciler.begin_scan(),
+        files,
+        unreadable_paths=unreadable_paths,
+    )
 
 
 def _two_media_records(
     connection: sqlite3.Connection,
     *,
-    first_path: str,
-    first_content_hash: str,
-    first_mtime: float,
-    second_path: str,
-    second_content_hash: str,
-    second_mtime: float,
+    first: _MediaSeed,
+    second: _MediaSeed,
 ) -> tuple[MediaRepository, Media, Media, Reconciler]:
     repository = MediaRepository(connection)
-    first_record = repository.create(
-        relative_path=first_path,
-        content_hash=first_content_hash,
-        size=1,
-        mtime=first_mtime,
-        state=MediaState.ACTIVE,
-    )
-    second_record = repository.create(
-        relative_path=second_path,
-        content_hash=second_content_hash,
-        size=1,
-        mtime=second_mtime,
-        state=MediaState.ACTIVE,
-    )
+    first_record = _create_active_seed(repository, first)
+    second_record = _create_active_seed(repository, second)
     return repository, first_record, second_record, Reconciler()
 
 
@@ -142,18 +179,12 @@ def test_cached_hash_is_rejected_for_inactive_or_changed_records(
     scanned_mtime: float,
     recorded_mtime: float,
 ) -> None:
-    scanned = ScannedFile(
-        relative_path="photo.jpg",
-        absolute_path=Path("photo.jpg"),
-        size=scanned_size,
-        mtime=scanned_mtime,
-    )
-    recorded = Media(
-        id=1,
-        relative_path="photo.jpg",
+    scanned, recorded = _cache_records(
+        cache_size=scanned_size,
+        persisted_size=recorded_size,
+        cache_mtime=scanned_mtime,
+        persisted_mtime=recorded_mtime,
         content_hash="old",
-        size=recorded_size,
-        mtime=recorded_mtime,
         state=state,
     )
 
@@ -163,19 +194,12 @@ def test_cached_hash_is_rejected_for_inactive_or_changed_records(
 def test_cached_hash_size_comparison_uses_value_equality() -> None:
     recorded_size = int("1024")
     scanned_size = int("10" + "24")
-    scanned = ScannedFile(
-        relative_path="photo.jpg",
-        absolute_path=Path("photo.jpg"),
-        size=scanned_size,
-        mtime=10.5,
-    )
-    recorded = Media(
-        id=1,
-        relative_path="photo.jpg",
+    scanned, recorded = _cache_records(
+        cache_size=scanned_size,
+        persisted_size=recorded_size,
+        cache_mtime=10.5,
+        persisted_mtime=10.5,
         content_hash="same",
-        size=recorded_size,
-        mtime=10.5,
-        state=MediaState.ACTIVE,
     )
 
     assert recorded_size == scanned_size
@@ -184,19 +208,12 @@ def test_cached_hash_size_comparison_uses_value_equality() -> None:
 
 
 def test_recent_mtime_cutoff_is_strict() -> None:
-    scanned = ScannedFile(
-        relative_path="photo.jpg",
-        absolute_path=Path("photo.jpg"),
-        size=1024,
-        mtime=98.125,
-    )
-    recorded = Media(
-        id=1,
-        relative_path="photo.jpg",
+    scanned, recorded = _cache_records(
+        cache_size=1024,
+        persisted_size=1024,
+        cache_mtime=98.125,
+        persisted_mtime=98.125,
         content_hash="same",
-        size=1024,
-        mtime=98.125,
-        state=MediaState.ACTIVE,
     )
 
     assert _recorded_hash_if_unchanged(scanned, recorded, now=100.125) == "same"
@@ -216,11 +233,10 @@ def test_reconciliation_reports_each_outcome_count(
     changed = _active_record(repository, "changed.jpg", "old", mtime=2.5)
     moved = _active_record(repository, "old-location.jpg", "move", mtime=3.5)
     missing = _active_record(repository, "absent.jpg", "absent", mtime=4.5)
-    generation = reconciler.begin_scan()
 
-    result = reconciler.reconcile(
+    result = _reconcile_with_files(
         migrated_connection,
-        generation,
+        reconciler,
         [
             _hashed_file("unchanged.jpg", "same"),
             _hashed_file("changed.jpg", "replacement"),
@@ -245,11 +261,10 @@ def test_unreadable_path_does_not_stop_later_missing_paths_from_being_marked(
     repository, reconciler = _repository_and_reconciler(migrated_connection)
     unreadable = _active_record(repository, "a-unreadable.jpg", "a")
     absent = _active_record(repository, "b-absent.jpg", "b", mtime=2.5)
-    generation = reconciler.begin_scan()
 
-    result = reconciler.reconcile(
+    result = _reconcile_with_files(
         migrated_connection,
-        generation,
+        reconciler,
         [],
         unreadable_paths=frozenset({"a-unreadable.jpg"}),
     )
@@ -264,12 +279,8 @@ def test_ambiguous_reverse_move_does_not_relink_one_of_two_candidates(
 ) -> None:
     repository, first, second, reconciler = _two_media_records(
         migrated_connection,
-        first_path="first.jpg",
-        first_content_hash="shared",
-        first_mtime=1.5,
-        second_path="second.jpg",
-        second_content_hash="shared",
-        second_mtime=2.5,
+        first=_MediaSeed(relative_path="first.jpg", content_hash="shared", mtime=1.5),
+        second=_MediaSeed(relative_path="second.jpg", content_hash="shared", mtime=2.5),
     )
 
     result = _reconcile_with_files(
@@ -288,12 +299,8 @@ def test_relinked_record_does_not_hide_later_missing_records(
 ) -> None:
     repository, moved, absent, reconciler = _two_media_records(
         migrated_connection,
-        first_path="a-old.jpg",
-        first_content_hash="move",
-        first_mtime=1.5,
-        second_path="z-absent.jpg",
-        second_content_hash="absent",
-        second_mtime=2.5,
+        first=_MediaSeed(relative_path="a-old.jpg", content_hash="move", mtime=1.5),
+        second=_MediaSeed(relative_path="z-absent.jpg", content_hash="absent", mtime=2.5),
     )
 
     result = _reconcile_with_files(

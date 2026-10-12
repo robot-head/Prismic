@@ -6,8 +6,6 @@ from PySide6.QtMultimedia import QMediaPlayer
 from pytestqt.qtbot import QtBot
 
 from prismic.application.input import shortcuts
-from prismic.application.input.shortcuts import ShortcutBindings
-from prismic.domain.media import Media, MediaState
 from prismic.domain.tag import Tag
 from prismic.media import loader as loader_module
 from prismic.media.loader import ImageLoader
@@ -22,6 +20,7 @@ from prismic.ui.result_model import MediaIdRole, ResultListModel
 from prismic.ui.tag_panel import TagPanel
 from prismic.ui.transient_message_bar import TransientMessageBar
 from prismic.ui.viewer import MediaViewer
+from tests.gui._media_helpers import make_media
 from tests.gui._mutation_helpers import assert_raise_not_requested, wheel_event
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "media"
@@ -35,7 +34,7 @@ def test_literal_character_only_accepts_single_character_bindings() -> None:
 
 
 def test_bare_modifier_key_event_is_not_consumed(qtbot: QtBot) -> None:
-    bindings = ShortcutBindings()
+    bindings = shortcuts.ShortcutBindings()
     controller = KeyboardController(
         bindings,
         on_navigate_previous=lambda: None,
@@ -103,7 +102,7 @@ def test_hover_hints_show_on_enter_and_clear_on_leave(qtbot: QtBot) -> None:
     widget = TransientMessageBar()
     qtbot.addWidget(bar)
     qtbot.addWidget(widget)
-    controller = HoverHintController(bar, ShortcutBindings())
+    controller = HoverHintController(bar, shortcuts.ShortcutBindings())
     controller.register_widget(widget, shortcuts.NAVIGATE_NEXT, "Next item")
 
     controller.eventFilter(widget, QEvent(QEvent.Type.Enter))
@@ -267,18 +266,7 @@ def test_result_model_exposes_media_id_role_and_rejects_out_of_range_indices(
 ) -> None:
     assert int(MediaIdRole) == int(Qt.ItemDataRole.UserRole) + 1
     model = ResultListModel()
-    model.set_media(
-        [
-            Media(
-                id=29,
-                relative_path="photo.jpg",
-                content_hash="hash",
-                size=1,
-                mtime=1.0,
-                state=MediaState.ACTIVE,
-            )
-        ]
-    )
+    model.set_media([make_media(media_id=29)])
 
     assert model.data(model.index(0, 0), MediaIdRole) == 29
     assert model.data(model.index(5, 0)) is None

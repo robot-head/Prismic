@@ -22,6 +22,14 @@ from prismic.ui.tag_model import (
 from prismic.ui.tag_panel import TagPanel
 
 
+def _dismiss_question(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        MessageDialog,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.NoButton,
+    )
+
+
 def test_hover_hints_only_change_on_enter_and_leave(qtbot: QtBot) -> None:
     bar = HoverExplainerBar()
     dynamic = QWidget()
@@ -194,11 +202,7 @@ def test_conflict_confirmation_does_not_accept_a_dismissed_dialog(
         for row in dialog.shortcuts_panel.rows
         if row.definition.id == shortcuts.OPEN_COLLECTION_FOLDER
     )
-    monkeypatch.setattr(
-        MessageDialog,
-        "question",
-        lambda *_args, **_kwargs: QMessageBox.StandardButton.NoButton,
-    )
+    _dismiss_question(monkeypatch)
 
     assert row._confirm_conflicts("Ctrl+T") is False
     assert bindings.binding(shortcuts.TOGGLE_THUMBNAILS) == "Ctrl+T"
@@ -211,11 +215,7 @@ def test_restore_defaults_does_not_accept_a_dismissed_dialog(
     bindings.set_binding(shortcuts.OPEN_COLLECTION_FOLDER, "F5")
     dialog = SettingsDialog(bindings)
     qtbot.addWidget(dialog)
-    monkeypatch.setattr(
-        MessageDialog,
-        "question",
-        lambda *_args, **_kwargs: QMessageBox.StandardButton.NoButton,
-    )
+    _dismiss_question(monkeypatch)
 
     dialog.shortcuts_panel._restore_defaults()
 

@@ -16,6 +16,7 @@ from prismic.ui.thumbnail_services import ThumbnailServices
 from prismic.ui.viewer import MediaViewer
 from tests.gui._media_helpers import solid_image
 from tests.gui._paint_helpers import PaintStub
+from tests.gui._viewer_helpers import show_media
 
 
 class _Index:
@@ -32,9 +33,7 @@ class _RecordingPainter(PaintStub):
         self.text_alignments: list[Qt.AlignmentFlag] = []
         self.pixmap_positions: list[QPoint] = []
 
-    def drawText(
-        self, _rect: QRectF, alignment: Qt.AlignmentFlag, _text: str
-    ) -> None:
+    def drawText(self, _rect: QRectF, alignment: Qt.AlignmentFlag, _text: str) -> None:
         self.text_alignments.append(alignment)
 
     def setClipPath(self, _path: QPainterPath) -> None:
@@ -72,9 +71,7 @@ def test_delegate_text_is_left_aligned_and_vertically_centered(qtbot: QtBot) -> 
 
     _delegate().paint(painter, _paint_option(), _Index())  # type: ignore[arg-type]
 
-    assert painter.text_alignments == [
-        Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
-    ]
+    assert painter.text_alignments == [Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft]
 
 
 def test_delegate_centers_odd_horizontal_and_vertical_crops(qtbot: QtBot) -> None:
@@ -113,9 +110,7 @@ def test_viewer_layouts_have_no_margins_or_spacing(qtbot: QtBot) -> None:
     assert controls_layout.getContentsMargins() == (0, 0, 0, 0)
 
 
-def test_showing_a_still_image_keeps_video_controls_hidden(
-    qtbot: QtBot, monkeypatch
-) -> None:
+def test_showing_a_still_image_keeps_video_controls_hidden(qtbot: QtBot, monkeypatch) -> None:
     image = solid_image(3, 2)
     viewer = _show_image(qtbot, monkeypatch, image, Path("photo.png"))
 
@@ -162,15 +157,10 @@ class _Movie:
 
 def _show_image(qtbot: QtBot, monkeypatch, image: QImage, path: Path) -> MediaViewer:
     monkeypatch.setattr(viewer_module, "load_image", lambda _path: image)
-    viewer = MediaViewer()
-    qtbot.addWidget(viewer)
-    viewer.show_media(path)
-    return viewer
+    return show_media(qtbot, path)
 
 
-def test_single_frame_gif_falls_back_to_a_still_image(
-    qtbot: QtBot, monkeypatch
-) -> None:
+def test_single_frame_gif_falls_back_to_a_still_image(qtbot: QtBot, monkeypatch) -> None:
     image = solid_image(2, 2)
     monkeypatch.setattr(viewer_module, "QImageReader", lambda path: _Reader(path, 1))
     viewer = _show_image(qtbot, monkeypatch, image, Path("still.gif"))

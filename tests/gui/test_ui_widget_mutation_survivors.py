@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QPointF, QRect, Qt
-from PySide6.QtGui import QKeyEvent, QMouseEvent
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QListView, QStyledItemDelegate, QStyleOptionViewItem
 from pytestqt.qtbot import QtBot
 
-from prismic.domain.media import Media, MediaState
 from prismic.domain.tag import Tag
 from prismic.ui.instance_bridge import InstanceBridge
 from prismic.ui.panel_toolbar import PanelToolbar, ShuffleButton
@@ -15,20 +14,15 @@ from prismic.ui.result_model import MediaIdRole, ResultListModel
 from prismic.ui.tag_model import TagIdRole, TagListModel
 from prismic.ui.tag_row_delegate import TagRowDelegate
 from prismic.ui.transient_message_bar import TransientMessageBar
-from tests.gui._mutation_helpers import RecordingCalls, assert_raise_not_requested
+from tests.gui._media_helpers import make_media
+from tests.gui._mutation_helpers import (
+    RecordingCalls,
+    RecordingPainter,
+    assert_raise_not_requested,
+    left_mouse_release_at,
+)
 from tests.gui._progress_test_helpers import report_progress
 from tests.gui.helpers import make_scan_progress_bar
-
-
-def _media() -> Media:
-    return Media(
-        id=1,
-        relative_path="photo.jpg",
-        content_hash="hash",
-        size=1,
-        mtime=1.0,
-        state=MediaState.ACTIVE,
-    )
 
 
 def _tag_delegate(qtbot: QtBot) -> tuple[QListView, TagListModel, TagRowDelegate]:
@@ -42,27 +36,9 @@ def _tag_delegate(qtbot: QtBot) -> tuple[QListView, TagListModel, TagRowDelegate
     return view, model, delegate
 
 
-class _Metrics:
-    def __init__(self) -> None:
-        self.widths: list[int] = []
-
-    def elidedText(self, text: str, _mode: Qt.TextElideMode, width: int) -> str:
-        self.widths.append(width)
-        return text
-
-
-class _PaintRecorder(RecordingCalls):
-    def __init__(self) -> None:
-        super().__init__()
-        self.metrics = _Metrics()
-
-    def fontMetrics(self) -> _Metrics:
-        return self.metrics
-
-
 def test_result_model_returns_none_for_unknown_roles_and_far_past_end_rows() -> None:
     model = ResultListModel()
-    model.set_media([_media()])
+    model.set_media([make_media()])
 
     class ValidIndex:
         def isValid(self) -> bool:
@@ -155,14 +131,7 @@ def test_tag_row_delegate_consumes_a_delete_click(qtbot: QtBot) -> None:
     option.rect = QRect(0, 0, 240, 32)
     delete_rect = delegate._rects(option.rect)[2]  # noqa: SLF001 - target the delete affordance
     position = QPointF(delete_rect.center())
-    event = QMouseEvent(
-        QEvent.Type.MouseButtonRelease,
-        position,
-        position,
-        Qt.MouseButton.LeftButton,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
+    event = left_mouse_release_at(position)
     deleted: list[int] = []
     delegate.delete_requested.connect(deleted.append)
 
@@ -191,7 +160,7 @@ def test_tag_row_paint_preserves_border_strokes_and_text_width(qtbot: QtBot) -> 
     _view, model, delegate = _tag_delegate(qtbot)
     option = QStyleOptionViewItem()
     option.rect = QRect(0, 0, 241, 32)
-    painter = _PaintRecorder()
+    painter = RecordingPainter()
 
     delegate.paint(painter, option, model.index(0, 0))
 

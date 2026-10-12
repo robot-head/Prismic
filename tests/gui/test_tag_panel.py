@@ -4,6 +4,7 @@ from pytestqt.qtbot import QtBot
 
 from prismic.domain.tag import Tag
 from prismic.ui.tag_panel import TagPanel
+from tests.gui._search_helpers import assert_search_box_is_empty
 
 _TAGS = [Tag(id=1, name="kittens"), Tag(id=2, name="sunset"), Tag(id=3, name="sunrise")]
 
@@ -89,8 +90,7 @@ def test_clear_search_preserves_whether_search_had_focus(qtbot: QtBot, focus_sea
 
     panel.clear_search_keep_focus()
 
-    assert panel.search_box.text() == ""
-    assert panel.search_box.hasFocus() is focus_search
+    assert_search_box_is_empty(panel.search_box, keeps_focus=focus_search)
 
 
 def test_focus_search_gives_the_search_box_focus(qtbot: QtBot) -> None:

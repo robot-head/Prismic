@@ -1,4 +1,3 @@
-from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -12,6 +11,7 @@ from prismic.application.input.resolver import InputEvent
 from prismic.application.input.shortcuts import SHORTCUTS, keycaps
 from prismic.application.state import ApplicationState
 from prismic.persistence.preferences import PreferencesStore
+from tests.unit._record_contracts import assert_frozen_and_slotted
 
 
 def test_commands_require_execute_and_undo_implementations() -> None:
@@ -62,9 +62,7 @@ def test_public_input_and_settings_records_are_frozen_and_slotted() -> None:
     )
 
     for record, field in records:
-        with pytest.raises(FrozenInstanceError):
-            setattr(record, field, "changed")
-        assert not hasattr(record, "__dict__")
+        assert_frozen_and_slotted(record, field=field)
 
 
 def test_quick_select_labels_and_descriptions_name_each_one_based_slot() -> None:

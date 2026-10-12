@@ -8,6 +8,7 @@ from prismic.application.commands.mapping_commands import MappingAddCommand
 from prismic.domain.tag import Tag
 from prismic.ui.column_splitter import _ColumnSplitterHandle
 from prismic.ui.main_window import MainWindow
+from tests.gui._search_helpers import assert_search_box_is_empty
 from tests.gui.helpers import (
     create_tag,
     open_and_create_tag,
@@ -181,11 +182,9 @@ def test_opening_a_collection_populates_the_result_list(
 
 
 def test_scan_progress_bar_is_hidden_once_the_initial_scan_completes(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
+    shown_window: MainWindow,
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-
-    assert window._scan_progress_bar.isHidden()
+    assert shown_window._scan_progress_bar.isHidden()
 
 
 def test_rescanning_shows_progress_that_reaches_completion(
@@ -245,55 +244,49 @@ def test_renaming_or_deleting_a_tag_via_the_ui(
     assert window.filter_panel.model.rowCount() == len(expected_names)
 
 
-def test_filter_selection_narrows_the_result_view(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
-) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    tag = create_tag(window)
-    first_media = window.session.media.list_all()[0]  # type: ignore[union-attr]
-    window.session.execute(  # type: ignore[union-attr]
+def test_filter_selection_narrows_the_result_view(qtbot: QtBot, shown_window: MainWindow) -> None:
+    tag = create_tag(shown_window)
+    first_media = shown_window.session.media.list_all()[0]  # type: ignore[union-attr]
+    shown_window.session.execute(  # type: ignore[union-attr]
         MappingAddCommand(media_id=first_media.id, tag_id=tag.id)
     )
-    window._refresh_all()
+    shown_window._refresh_all()
 
-    window._on_filter_toggle(tag.id)
+    shown_window._on_filter_toggle(tag.id)
 
-    assert window.result_model.rowCount() == 1
-    assert window.result_model.media_at(0).id == first_media.id
+    assert shown_window.result_model.rowCount() == 1
+    assert shown_window.result_model.media_at(0).id == first_media.id
 
-    window._on_filter_toggle(tag.id)  # deselect
+    shown_window._on_filter_toggle(tag.id)  # deselect
 
-    assert window.result_model.rowCount() == 2
+    assert shown_window.result_model.rowCount() == 2
 
 
 def test_item_create_and_check_creates_the_tag_and_maps_it_in_one_step(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
+    shown_window: MainWindow,
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    current_id = _select_first_item(window)
+    current_id = _select_first_item(shown_window)
 
-    window._on_item_create_and_check("vacation")
+    shown_window._on_item_create_and_check("vacation")
 
-    tags = window.session.tags.list_all()  # type: ignore[union-attr]
+    tags = shown_window.session.tags.list_all()  # type: ignore[union-attr]
     assert [t.name for t in tags] == ["vacation"]
-    assert [t.id for t in window.session.mappings.tags_for_media(current_id)] == [  # type: ignore[union-attr]
+    assert [t.id for t in shown_window.session.mappings.tags_for_media(current_id)] == [  # type: ignore[union-attr]
         tags[0].id
     ]
 
 
 def test_filter_create_and_check_creates_the_tag_and_activates_the_filter(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
+    shown_window: MainWindow,
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
+    shown_window._on_filter_create_and_check("vacation")
 
-    window._on_filter_create_and_check("vacation")
-
-    tags = window.session.tags.list_all()  # type: ignore[union-attr]
+    tags = shown_window.session.tags.list_all()  # type: ignore[union-attr]
     assert [t.name for t in tags] == ["vacation"]
-    assert window.session.state.selected_tag_ids == [tags[0].id]  # type: ignore[union-attr]
+    assert shown_window.session.state.selected_tag_ids == [tags[0].id]  # type: ignore[union-attr]
     # Nothing is mapped to any file yet -- creating a tag from the filter
     # box narrows the browse list, it doesn't tag whatever's on screen.
-    assert window.result_model.rowCount() == 0
+    assert shown_window.result_model.rowCount() == 0
 
 
 def test_item_create_and_check_with_an_existing_exact_name_reuses_it_silently(
@@ -343,20 +336,19 @@ def test_filter_create_and_check_then_deselect_restores_the_full_list(
 
 
 def test_in_viewer_tag_toggle_maps_the_current_item(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
+    shown_window: MainWindow,
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    tag, current_id = _create_tag_on_current_item(window, "vacation")
+    tag, current_id = _create_tag_on_current_item(shown_window, "vacation")
 
-    window._on_item_tag_toggle(tag.id)
+    shown_window._on_item_tag_toggle(tag.id)
 
-    assert [t.id for t in window.session.mappings.tags_for_media(current_id)] == [  # type: ignore[union-attr]
+    assert [t.id for t in shown_window.session.mappings.tags_for_media(current_id)] == [  # type: ignore[union-attr]
         tag.id
     ]
 
-    window._on_item_tag_toggle(tag.id)  # toggle back off
+    shown_window._on_item_tag_toggle(tag.id)  # toggle back off
 
-    assert window.session.mappings.tags_for_media(current_id) == []  # type: ignore[union-attr]
+    assert shown_window.session.mappings.tags_for_media(current_id) == []  # type: ignore[union-attr]
 
 
 @pytest.mark.parametrize("scope", ["item", "filter"])
@@ -379,8 +371,7 @@ def test_tag_toggle_clears_its_search_box_without_losing_focus(
 
     toggle(tag.id)
 
-    assert panel.search_box.text() == ""
-    assert panel.search_box.hasFocus()
+    assert_search_box_is_empty(panel.search_box, keeps_focus=True)
 
 
 def test_item_tag_hover_past_the_shortcut_group_in_its_own_active_group_clears(
@@ -445,30 +436,28 @@ def test_item_tag_hover_past_the_shortcut_group_mirrors_for_selected_mode(
 
 
 def test_recently_clicked_tag_floats_to_the_top_of_both_panels(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
+    shown_window: MainWindow,
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    window._on_tag_create("alpha")
-    window._on_tag_create("beta")
-    current_id = window.session.state.result_set[0]  # type: ignore[union-attr]
-    window.session.state.current_item = current_id  # type: ignore[union-attr]
-    window._refresh_all()
-    tags_by_name = {t.name: t.id for t in window.session.tags.list_all()}  # type: ignore[union-attr]
+    shown_window._on_tag_create("alpha")
+    shown_window._on_tag_create("beta")
+    current_id = shown_window.session.state.result_set[0]  # type: ignore[union-attr]
+    shown_window.session.state.current_item = current_id  # type: ignore[union-attr]
+    shown_window._refresh_all()
+    tags_by_name = {t.name: t.id for t in shown_window.session.tags.list_all()}  # type: ignore[union-attr]
 
     # Alphabetically/popularity "alpha" already sorts first; click "beta"
     # from the filter panel and it should jump ahead of "alpha" in *both*
     # list views, since they share one underlying recency ordering.
-    window._on_filter_toggle(tags_by_name["beta"])
-    window._on_filter_toggle(tags_by_name["beta"])  # deselect again, click still counts
+    shown_window._on_filter_toggle(tags_by_name["beta"])
+    shown_window._on_filter_toggle(tags_by_name["beta"])  # deselect again, click still counts
 
-    assert window.filter_panel.model.tag_at(0).name == "beta"
-    assert window.item_tag_panel.model.tag_at(0).name == "beta"
+    assert shown_window.filter_panel.model.tag_at(0).name == "beta"
+    assert shown_window.item_tag_panel.model.tag_at(0).name == "beta"
 
 
 def _create_tags_with_gamma_then_alpha_checked(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
+    window: MainWindow,
 ) -> dict[str, int]:
-    open_and_wait(qtbot, window, collection_dir)
     _first_id, _second_id, tags_by_name = _create_tags_on_first_item(
         window, ("alpha", "beta", "gamma")
     )
@@ -478,46 +467,45 @@ def _create_tags_with_gamma_then_alpha_checked(
 
 
 def test_checking_a_tag_appends_it_to_the_bottom_of_the_checked_group(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
+    shown_window: MainWindow,
 ) -> None:
     """Checking "alpha" after "gamma" should leave gamma on top -- the
     popularity/recency algorithm would in fact put alpha first (it's the
     more recently clicked one), so this only passes if checking really is
     appending to a stable order rather than re-running that algorithm."""
-    _create_tags_with_gamma_then_alpha_checked(qtbot, window, collection_dir)
+    _create_tags_with_gamma_then_alpha_checked(shown_window)
 
-    assert window.item_tag_panel.model.tag_at(0).name == "gamma"
-    assert window.item_tag_panel.model.tag_at(1).name == "alpha"
+    assert shown_window.item_tag_panel.model.tag_at(0).name == "gamma"
+    assert shown_window.item_tag_panel.model.tag_at(1).name == "alpha"
 
 
 def test_unchecking_a_tag_drops_it_without_reordering_the_rest(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
+    shown_window: MainWindow,
 ) -> None:
-    tags_by_name = _create_tags_with_gamma_then_alpha_checked(qtbot, window, collection_dir)
-    window._on_item_tag_toggle(tags_by_name["beta"])
+    tags_by_name = _create_tags_with_gamma_then_alpha_checked(shown_window)
+    shown_window._on_item_tag_toggle(tags_by_name["beta"])
     # stable order is now gamma, alpha, beta -- uncheck the middle one
-    window._on_item_tag_toggle(tags_by_name["alpha"])
+    shown_window._on_item_tag_toggle(tags_by_name["alpha"])
 
-    assert window.item_tag_panel.model.tag_at(0).name == "gamma"
-    assert window.item_tag_panel.model.tag_at(1).name == "beta"
+    assert shown_window.item_tag_panel.model.tag_at(0).name == "gamma"
+    assert shown_window.item_tag_panel.model.tag_at(1).name == "beta"
 
 
 def test_switching_files_resorts_the_checked_group_by_the_usual_algorithm(
-    qtbot: QtBot, window: MainWindow, collection_dir: Path
+    shown_window: MainWindow,
 ) -> None:
-    open_and_wait(qtbot, window, collection_dir)
-    first_id, second_id, tags_by_name = _create_tags_on_first_item(window, ("alpha", "gamma"))
+    first_id, second_id, tags_by_name = _create_tags_on_first_item(shown_window, ("alpha", "gamma"))
 
-    window._on_item_tag_toggle(tags_by_name["gamma"])
-    window._on_item_tag_toggle(tags_by_name["alpha"])
-    assert window.item_tag_panel.model.tag_at(0).name == "gamma"  # stable append order
+    shown_window._on_item_tag_toggle(tags_by_name["gamma"])
+    shown_window._on_item_tag_toggle(tags_by_name["alpha"])
+    assert shown_window.item_tag_panel.model.tag_at(0).name == "gamma"  # stable append order
 
     # Switch to the other file and back -- reloading file 1 again should
     # re-sort it by the usual (recency) algorithm, which puts alpha first
     # since it was clicked more recently than gamma.
-    window.session.state.current_item = second_id  # type: ignore[union-attr]
-    window._refresh_all()
-    window.session.state.current_item = first_id  # type: ignore[union-attr]
-    window._refresh_all()
+    shown_window.session.state.current_item = second_id  # type: ignore[union-attr]
+    shown_window._refresh_all()
+    shown_window.session.state.current_item = first_id  # type: ignore[union-attr]
+    shown_window._refresh_all()
 
-    assert window.item_tag_panel.model.tag_at(0).name == "alpha"
+    assert shown_window.item_tag_panel.model.tag_at(0).name == "alpha"

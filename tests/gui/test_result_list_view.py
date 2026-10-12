@@ -2,19 +2,16 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView
 from pytestqt.qtbot import QtBot
 
-from prismic.domain.media import Media, MediaState
+from prismic.domain.media import Media
 from prismic.ui.result_list_view import ResultListView
 from prismic.ui.result_model import ResultListModel
+from tests.gui._media_helpers import make_media
 
 
 def _media(media_id: int, path: str) -> Media:
-    return Media(
-        id=media_id,
+    return make_media(
+        media_id=media_id,
         relative_path=path,
-        content_hash=path,
-        size=0,
-        mtime=0.0,
-        state=MediaState.ACTIVE,
     )
 
 
