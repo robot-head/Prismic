@@ -50,10 +50,9 @@ def test_result_model_uses_value_equality_for_media_ids_and_roles() -> None:
     assert model.data(index, int(MediaIdRole) + 1) is None
 
 
-@pytest.mark.parametrize("row_offset", [-1, 0], ids=["negative", "past-end"])
-def test_result_model_returns_no_data_for_invalid_rows(row_offset: int) -> None:
+@pytest.mark.parametrize("row", [-1, 1], ids=["negative", "past-end"])
+def test_result_model_returns_no_data_for_invalid_rows(row: int) -> None:
     model = _model()
-    row = model.rowCount() + row_offset
 
     class ValidIndex:
         def __init__(self, row: int) -> None:
