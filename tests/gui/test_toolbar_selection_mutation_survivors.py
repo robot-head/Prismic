@@ -154,7 +154,7 @@ def test_toolbar_layout_keeps_its_spacing_and_side_margins(qtbot) -> None:
     ]
 
 
-def test_shuffle_icon_draws_shallow_crossing_arrows_with_separated_heads() -> None:
+def test_shuffle_icon_draws_shallow_crossing_arrows_with_separated_heads(qtbot) -> None:
     painter = _Painter()
     ShuffleButton()._paint_icon(painter, QRect(10, 20, 40, 30))  # type: ignore[arg-type]
 
@@ -171,7 +171,7 @@ def test_shuffle_icon_draws_shallow_crossing_arrows_with_separated_heads() -> No
     ]
 
 
-def test_fullscreen_icon_draws_eight_corner_arms_of_the_expected_length() -> None:
+def test_fullscreen_icon_draws_eight_corner_arms_of_the_expected_length(qtbot) -> None:
     painter = _Painter()
     FullScreenButton()._paint_icon(painter, QRect(1, 2, 19, 16))  # type: ignore[arg-type]
 
