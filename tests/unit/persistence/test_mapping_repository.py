@@ -30,14 +30,23 @@ def _make_media(media_repo: MediaRepository, relative_path: str) -> int:
     ).id
 
 
+def _mapping_setup(
+    repositories: tuple[MappingRepository, MediaRepository, TagRepository], *, added: bool = False
+) -> tuple[MappingRepository, int, int]:
+    mappings, media_repo, tag_repo = repositories
+    media_id = _make_media(media_repo, "a.jpg")
+    tag_id = tag_repo.create("vacation").id
+    if added:
+        mappings.add(media_id, tag_id)
+    return mappings, media_id, tag_id
+
+
 def test_add_and_tags_for_media(
     repositories: tuple[MappingRepository, MediaRepository, TagRepository],
 ) -> None:
-    mappings, media_repo, tag_repo = repositories
-    media_id = _make_media(media_repo, "a.jpg")
-    tag = tag_repo.create("vacation")
+    mappings, media_id, tag_id = _mapping_setup(repositories)
 
-    mappings.add(media_id, tag.id)
+    mappings.add(media_id, tag_id)
 
     assert [t.name for t in mappings.tags_for_media(media_id)] == ["vacation"]
 
@@ -45,13 +54,10 @@ def test_add_and_tags_for_media(
 def test_add_the_same_mapping_twice_raises(
     repositories: tuple[MappingRepository, MediaRepository, TagRepository],
 ) -> None:
-    mappings, media_repo, tag_repo = repositories
-    media_id = _make_media(media_repo, "a.jpg")
-    tag = tag_repo.create("vacation")
-    mappings.add(media_id, tag.id)
+    mappings, media_id, tag_id = _mapping_setup(repositories, added=True)
 
     with pytest.raises(DuplicateMappingError):
-        mappings.add(media_id, tag.id)
+        mappings.add(media_id, tag_id)
 
 
 def test_add_with_a_nonexistent_media_id_is_rejected_by_the_foreign_key(
@@ -77,12 +83,9 @@ def test_add_with_a_nonexistent_tag_id_is_rejected_by_the_foreign_key(
 def test_remove_deletes_the_mapping(
     repositories: tuple[MappingRepository, MediaRepository, TagRepository],
 ) -> None:
-    mappings, media_repo, tag_repo = repositories
-    media_id = _make_media(media_repo, "a.jpg")
-    tag = tag_repo.create("vacation")
-    mappings.add(media_id, tag.id)
+    mappings, media_id, tag_id = _mapping_setup(repositories, added=True)
 
-    mappings.remove(media_id, tag.id)
+    mappings.remove(media_id, tag_id)
 
     assert mappings.tags_for_media(media_id) == []
 

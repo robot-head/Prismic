@@ -17,6 +17,17 @@ def _seed(
     return {name: tag_repo.create(name).id for name in tag_names}
 
 
+def _seed_correlated_pair(
+    connection: sqlite3.Connection, *, media_count: int = 5
+) -> dict[str, int]:
+    ids = _seed(connection, media_count=media_count, tag_names=["cat", "kitten"])
+    mappings = MappingRepository(connection)
+    for media_id in range(1, media_count + 1):
+        mappings.add(media_id, ids["cat"])
+        mappings.add(media_id, ids["kitten"])
+    return ids
+
+
 def test_recompute_leaves_no_correlations_when_nothing_is_tagged(
     migrated_connection: sqlite3.Connection,
 ) -> None:
@@ -30,11 +41,7 @@ def test_recompute_leaves_no_correlations_when_nothing_is_tagged(
 def test_recompute_tracks_a_pair_meeting_the_cooccurrence_floor(
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    ids = _seed(migrated_connection, media_count=5, tag_names=["cat", "kitten"])
-    mappings = MappingRepository(migrated_connection)
-    for media_id in range(1, 6):
-        mappings.add(media_id, ids["cat"])
-        mappings.add(media_id, ids["kitten"])
+    ids = _seed_correlated_pair(migrated_connection)
     repository = TagCorrelationRepository(migrated_connection)
 
     repository.recompute(min_cooccurrence=5)
@@ -46,11 +53,7 @@ def test_recompute_tracks_a_pair_meeting_the_cooccurrence_floor(
 def test_recompute_drops_a_pair_below_the_cooccurrence_floor(
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    ids = _seed(migrated_connection, media_count=4, tag_names=["cat", "kitten"])
-    mappings = MappingRepository(migrated_connection)
-    for media_id in range(1, 5):
-        mappings.add(media_id, ids["cat"])
-        mappings.add(media_id, ids["kitten"])
+    ids = _seed_correlated_pair(migrated_connection, media_count=4)
     repository = TagCorrelationRepository(migrated_connection)
 
     repository.recompute(min_cooccurrence=5)
@@ -102,11 +105,7 @@ def test_best_correlations_from_multiple_tags_takes_the_strongest_match(
 def test_ensure_fresh_recomputes_when_never_computed(
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    ids = _seed(migrated_connection, media_count=5, tag_names=["cat", "kitten"])
-    mappings = MappingRepository(migrated_connection)
-    for media_id in range(1, 6):
-        mappings.add(media_id, ids["cat"])
-        mappings.add(media_id, ids["kitten"])
+    ids = _seed_correlated_pair(migrated_connection)
     repository = TagCorrelationRepository(migrated_connection)
 
     repository.ensure_fresh(min_cooccurrence=5)
@@ -122,11 +121,7 @@ def test_ensure_fresh_skips_recompute_within_the_throttle_window(
     repository = TagCorrelationRepository(migrated_connection, clock=clock)
     repository.recompute()  # consumes clock() == 100.0, sets computed_at
 
-    ids = _seed(migrated_connection, media_count=5, tag_names=["cat", "kitten"])
-    mappings = MappingRepository(migrated_connection)
-    for media_id in range(1, 6):
-        mappings.add(media_id, ids["cat"])
-        mappings.add(media_id, ids["kitten"])
+    ids = _seed_correlated_pair(migrated_connection)
 
     repository.ensure_fresh(min_cooccurrence=5, max_age_seconds=60.0)  # consumes 110.0, still < 60s
 

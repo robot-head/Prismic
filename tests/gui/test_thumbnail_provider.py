@@ -8,6 +8,7 @@ first decoded at.
 
 from pathlib import Path
 
+from PySide6.QtGui import QPixmap
 from pytestqt.qtbot import QtBot
 
 from prismic.application.worker_pool import WorkerPool
@@ -16,39 +17,47 @@ from prismic.ui.thumbnail_provider import ThumbnailProvider
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "media"
 
 
-def test_a_second_request_at_a_larger_dimension_replaces_the_cached_pixmap(
-    qtbot: QtBot
-) -> None:
+def _load_thumbnail(
+    qtbot: QtBot,
+    provider: ThumbnailProvider,
+    pool: WorkerPool,
+    path: Path,
+    dimension: int,
+) -> QPixmap:
+    provider.request(1, path, pool, dimension=dimension)
+    qtbot.waitUntil(lambda: provider.get(1) is not None, timeout=5000)
+    pixmap = provider.get(1)
+    assert pixmap is not None
+    return pixmap
+
+
+def test_a_second_request_at_a_larger_dimension_replaces_the_cached_pixmap(qtbot: QtBot) -> None:
     provider = ThumbnailProvider(dimension=32)
     pool = WorkerPool()
     path = FIXTURES_DIR / "supported_image.png"
 
-    provider.request(1, path, pool, dimension=32)
-    qtbot.waitUntil(lambda: provider.get(1) is not None, timeout=5000)
-    small = provider.get(1)
-    assert small is not None
+    small = _load_thumbnail(qtbot, provider, pool, path, dimension=32)
 
     provider.request(1, path, pool, dimension=512)
     qtbot.waitUntil(
-        lambda: provider.get(1) is not None
-        and (provider.get(1).width() > small.width() or provider.get(1).height() > small.height()),  # type: ignore[union-attr]
+        lambda: (
+            provider.get(1) is not None
+            and (
+                provider.get(1).width() > small.width() or provider.get(1).height() > small.height()
+            )
+        ),  # type: ignore[union-attr]
         timeout=5000,
     )
 
     pool.shutdown(wait=True)
 
 
-def test_a_second_request_at_a_smaller_dimension_is_a_no_op(
-    qtbot: QtBot
-) -> None:
+def test_a_second_request_at_a_smaller_dimension_is_a_no_op(qtbot: QtBot) -> None:
     provider = ThumbnailProvider(dimension=512)
     pool = WorkerPool()
     path = FIXTURES_DIR / "supported_image.png"
 
-    provider.request(1, path, pool, dimension=512)
-    qtbot.waitUntil(lambda: provider.get(1) is not None, timeout=5000)
-    large = provider.get(1)
-    assert large is not None
+    large = _load_thumbnail(qtbot, provider, pool, path, dimension=512)
 
     provider.request(1, path, pool, dimension=32)
 
@@ -66,15 +75,13 @@ def test_reset_clears_the_remembered_decode_size_too(qtbot: QtBot) -> None:
     pool = WorkerPool()
     path = FIXTURES_DIR / "supported_image.png"
 
-    provider.request(1, path, pool, dimension=512)
-    qtbot.waitUntil(lambda: provider.get(1) is not None, timeout=5000)
+    _load_thumbnail(qtbot, provider, pool, path, dimension=512)
 
     provider.reset()
 
     assert provider.get(1) is None
     # A fresh request at a small dimension must actually decode again,
     # not be treated as already-satisfied by the pre-reset large decode.
-    provider.request(1, path, pool, dimension=32)
-    qtbot.waitUntil(lambda: provider.get(1) is not None, timeout=5000)
+    _load_thumbnail(qtbot, provider, pool, path, dimension=32)
 
     pool.shutdown(wait=True)

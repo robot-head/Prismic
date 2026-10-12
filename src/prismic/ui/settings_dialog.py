@@ -67,6 +67,21 @@ _UNSET_TEXT = "Not set"
 _CAPTURING_TEXT = "Press a key…"
 
 
+def _row_layout(
+    parent: QWidget,
+    text_column: QVBoxLayout,
+    editor: QWidget,
+    *trailing_widgets: QWidget,
+) -> None:
+    layout = QHBoxLayout(parent)
+    layout.setContentsMargins(10, 8, 10, 8)
+    layout.setSpacing(10)
+    layout.addLayout(text_column, 1)
+    layout.addWidget(editor)
+    for widget in trailing_widgets:
+        layout.addWidget(widget)
+
+
 def binding_display(binding: str, *, held: bool = False) -> str:
     """A binding as one human-readable string ("Ctrl + Shift + O").
 
@@ -288,13 +303,7 @@ class ShortcutRow(QWidget):
         self._reset_button.setObjectName("shortcutSmallButton")
         self._reset_button.clicked.connect(self._reset)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(10)
-        layout.addLayout(text_column, 1)
-        layout.addWidget(self._editor)
-        layout.addWidget(self._clear_button)
-        layout.addWidget(self._reset_button)
+        _row_layout(self, text_column, self._editor, self._clear_button, self._reset_button)
 
         self.refresh()
 
@@ -532,13 +541,7 @@ class ThresholdRow(QWidget):
         self._reset_button.setObjectName("shortcutSmallButton")
         self._reset_button.clicked.connect(self._reset)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(10)
-        layout.addLayout(text_column, 1)
-        layout.addWidget(self._editor)
-        layout.addWidget(percent_sign)
-        layout.addWidget(self._reset_button)
+        _row_layout(self, text_column, self._editor, percent_sign, self._reset_button)
 
         self.refresh()
 
@@ -593,7 +596,7 @@ class TagRankingPanel(QWidget):
             "Correlated tags",
             "In the item tag panel, a tag that usually appears alongside a "
             "tag you've already checked is promoted to the top of the "
-            "unchecked list. \"Usually\" means at least this percentage of "
+            'unchecked list. "Usually" means at least this percentage of '
             "the checked tag's files also carry the other one, counted only "
             f"once both tags appear together on at least {DEFAULT_MIN_COOCCURRENCE} files.",
             default_fraction=DEFAULT_CORRELATION_THRESHOLD,

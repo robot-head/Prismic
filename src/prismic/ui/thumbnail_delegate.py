@@ -26,6 +26,7 @@ from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem,
 from prismic.application.worker_pool import WorkerPool
 from prismic.media.formats import SUPPORTED_VIDEO_EXTENSIONS
 from prismic.ui import theme
+from prismic.ui._thumbnail_badge import paint_play_badge
 from prismic.ui.result_model import MediaIdRole
 from prismic.ui.thumbnail_provider import ThumbnailProvider
 
@@ -119,30 +120,15 @@ class ThumbnailDelegate(QStyledItemDelegate):
             y_off = rect.y() - (scaled.height() - rect.height()) / 2
             painter.drawPixmap(int(x_off), int(y_off), scaled)
             if is_video:
-                self._paint_play_badge(painter, rect)
+                paint_play_badge(painter, rect, size_fraction=0.26)
         else:
             painter.fillRect(rect, QColor(theme.THUMB_PLACEHOLDER))
             if is_video:
-                self._paint_play_badge(painter, rect)
+                paint_play_badge(painter, rect, size_fraction=0.26)
             elif not self._provider.has_failed(media_id):
                 self._request_thumbnail(media_id, name)
 
         painter.restore()
-
-    def _paint_play_badge(self, painter: QPainter, rect: QRectF) -> None:
-        center = rect.center()
-        radius = min(rect.width(), rect.height()) * 0.26
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(theme.THUMB_VIDEO_BADGE))
-        painter.drawEllipse(center, radius, radius)
-        triangle = QPainterPath()
-        side = radius * 0.9
-        triangle.moveTo(center.x() - side * 0.35, center.y() - side * 0.5)
-        triangle.lineTo(center.x() - side * 0.35, center.y() + side * 0.5)
-        triangle.lineTo(center.x() + side * 0.55, center.y())
-        triangle.closeSubpath()
-        painter.setBrush(QColor(theme.TEXT_PRIMARY))
-        painter.drawPath(triangle)
 
     def _request_thumbnail(self, media_id: int, name: str) -> None:
         if Path(name).suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:

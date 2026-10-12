@@ -5,20 +5,50 @@ from PySide6.QtCore import QSettings
 from pytestqt.qtbot import QtBot
 
 from prismic.application.commands.mapping_commands import MappingAddCommand
+from prismic.domain.tag import Tag
 from prismic.ui.column_splitter import _ColumnSplitterHandle
 from prismic.ui.main_window import MainWindow
+from tests.gui.helpers import open_and_wait
 
 
-@pytest.fixture
-def window(qtbot: QtBot) -> MainWindow:
-    win = MainWindow()
-    qtbot.addWidget(win)
-    return win
+def _broken_collection(tmp_path: Path) -> Path:
+    root = tmp_path / "broken"
+    root.mkdir()
+    (root / "broken.prismic").write_bytes(b"not a real database")
+    return root
 
 
-def _open_and_wait(qtbot: QtBot, window: MainWindow, collection_dir: Path) -> None:
-    window.open_collection(collection_dir)
-    qtbot.waitUntil(lambda: window.result_model.rowCount() == 2, timeout=5000)
+def _capture_critical_messages(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    messages: list[str] = []
+    monkeypatch.setattr(
+        "prismic.ui.main_window.MessageDialog.critical",
+        lambda *args, **kwargs: messages.append(args[-1]),
+    )
+    return messages
+
+
+def _create_tag_on_current_item(window: MainWindow, name: str) -> tuple[Tag, int]:
+    window._on_tag_create(name)
+    session = window.session
+    assert session is not None
+    tag = session.tags.list_all()[0]
+    current_id = session.state.result_set[0]
+    session.state.current_item = current_id
+    window._refresh_all()
+    return tag, current_id
+
+
+def _create_tags_on_first_item(
+    window: MainWindow, names: tuple[str, ...]
+) -> tuple[int, int, dict[str, int]]:
+    session = window.session
+    assert session is not None
+    for name in names:
+        window._on_tag_create(name)
+    first_id, second_id = session.state.result_set
+    session.state.current_item = first_id
+    window._refresh_all()
+    return first_id, second_id, {tag.name: tag.id for tag in session.tags.list_all()}
 
 
 def test_initial_path_opens_after_construction_not_synchronously_in_init(
@@ -40,15 +70,8 @@ def test_initial_path_opens_after_construction_not_synchronously_in_init(
 def test_initial_path_failure_still_shows_the_error_after_construction(
     qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root = tmp_path / "broken"
-    root.mkdir()
-    (root / "broken.prismic").write_bytes(b"not a real database")
-
-    shown_messages: list[str] = []
-    monkeypatch.setattr(
-        "prismic.ui.main_window.MessageDialog.critical",
-        lambda *args, **kwargs: shown_messages.append(args[-1]),
-    )
+    root = _broken_collection(tmp_path)
+    shown_messages = _capture_critical_messages(monkeypatch)
 
     win = MainWindow(initial_path=root)
     qtbot.addWidget(win)
@@ -114,7 +137,7 @@ def test_starts_with_no_collection_open(window: MainWindow) -> None:
 def test_opening_a_collection_populates_the_result_list(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
 
     assert window.session is not None
     assert window.result_model.rowCount() == 2
@@ -123,7 +146,7 @@ def test_opening_a_collection_populates_the_result_list(
 def test_scan_progress_bar_is_hidden_once_the_initial_scan_completes(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
 
     assert window._scan_progress_bar.isHidden()
 
@@ -131,7 +154,9 @@ def test_scan_progress_bar_is_hidden_once_the_initial_scan_completes(
 def test_rescanning_shows_progress_that_reaches_completion(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
+    window.show()
+    qtbot.waitExposed(window)
 
     # Nothing changed on disk, so this rescan has the same 2 files -- and
     # the previous scan (opening the collection) also saw 2, so this is the
@@ -148,15 +173,8 @@ def test_rescanning_shows_progress_that_reaches_completion(
 def test_opening_a_bad_collection_shows_an_error_not_a_crash(
     qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root = tmp_path / "broken"
-    root.mkdir()
-    (root / "broken.prismic").write_bytes(b"not a real database")
-
-    shown_messages: list[str] = []
-    monkeypatch.setattr(
-        "prismic.ui.main_window.MessageDialog.critical",
-        lambda *args, **kwargs: shown_messages.append(args[-1]),
-    )
+    root = _broken_collection(tmp_path)
+    shown_messages = _capture_critical_messages(monkeypatch)
 
     window.open_collection(root)
 
@@ -167,7 +185,7 @@ def test_opening_a_bad_collection_shows_an_error_not_a_crash(
 def test_create_tag_via_the_ui_appears_in_the_filter_panel(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
 
     window._on_tag_create("vacation")
 
@@ -176,7 +194,7 @@ def test_create_tag_via_the_ui_appears_in_the_filter_panel(
 
 
 def test_rename_tag_via_the_ui(qtbot: QtBot, window: MainWindow, collection_dir: Path) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
     window._on_tag_create("vacation")
     tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
 
@@ -186,7 +204,7 @@ def test_rename_tag_via_the_ui(qtbot: QtBot, window: MainWindow, collection_dir:
 
 
 def test_delete_tag_via_the_ui(qtbot: QtBot, window: MainWindow, collection_dir: Path) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
     window._on_tag_create("vacation")
     tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
 
@@ -199,7 +217,7 @@ def test_delete_tag_via_the_ui(qtbot: QtBot, window: MainWindow, collection_dir:
 def test_filter_selection_narrows_the_result_view(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
     window._on_tag_create("vacation")
     tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
     first_media = window.session.media.list_all()[0]  # type: ignore[union-attr]
@@ -221,7 +239,7 @@ def test_filter_selection_narrows_the_result_view(
 def test_item_create_and_check_creates_the_tag_and_maps_it_in_one_step(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
     current_id = window.session.state.result_set[0]  # type: ignore[union-attr]
     window.session.state.current_item = current_id  # type: ignore[union-attr]
     window._refresh_all()
@@ -238,7 +256,7 @@ def test_item_create_and_check_creates_the_tag_and_maps_it_in_one_step(
 def test_filter_create_and_check_creates_the_tag_and_activates_the_filter(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
 
     window._on_filter_create_and_check("vacation")
 
@@ -258,7 +276,7 @@ def test_item_create_and_check_with_an_existing_exact_name_reuses_it_silently(
     `TagPanel._commit_search`'s docstring: Enter never falls back to
     picking a filtered row instead). That's expected, not a mistake, so it
     must apply the existing tag with no duplicate-name warning dialog."""
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
     current_id = window.session.state.result_set[0]  # type: ignore[union-attr]
     window.session.state.current_item = current_id  # type: ignore[union-attr]
     window._refresh_all()
@@ -287,7 +305,7 @@ def test_filter_create_and_check_then_deselect_restores_the_full_list(
     search box (narrows to zero, since nothing's mapped to it yet), then
     toggle it back off and confirm the full list actually comes back --
     not just that `selected_tag_ids` is empty."""
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
 
     window._on_filter_create_and_check("vacation")
     assert window.result_model.rowCount() == 0
@@ -302,12 +320,8 @@ def test_filter_create_and_check_then_deselect_restores_the_full_list(
 def test_in_viewer_tag_toggle_maps_the_current_item(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
-    window._on_tag_create("vacation")
-    tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
-    current_id = window.session.state.result_set[0]  # type: ignore[union-attr]
-    window.session.state.current_item = current_id  # type: ignore[union-attr]
-    window._refresh_all()
+    open_and_wait(qtbot, window, collection_dir)
+    tag, current_id = _create_tag_on_current_item(window, "vacation")
 
     window._on_item_tag_toggle(tag.id)
 
@@ -323,12 +337,10 @@ def test_in_viewer_tag_toggle_maps_the_current_item(
 def test_item_tag_toggle_clears_its_search_box_without_losing_focus(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
-    window._on_tag_create("vacation")
-    tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
-    current_id = window.session.state.result_set[0]  # type: ignore[union-attr]
-    window.session.state.current_item = current_id  # type: ignore[union-attr]
-    window._refresh_all()
+    open_and_wait(qtbot, window, collection_dir)
+    window.show()
+    qtbot.waitExposed(window)
+    tag, _current_id = _create_tag_on_current_item(window, "vacation")
     window.item_tag_panel.search_box.setText("vac")
     window.item_tag_panel.search_box.setFocus()
     qtbot.waitUntil(lambda: window.item_tag_panel.search_box.hasFocus(), timeout=1000)
@@ -342,7 +354,9 @@ def test_item_tag_toggle_clears_its_search_box_without_losing_focus(
 def test_filter_toggle_clears_its_search_box_without_losing_focus(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
+    window.show()
+    qtbot.waitExposed(window)
     window._on_tag_create("vacation")
     tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
     window._refresh_all()
@@ -359,7 +373,7 @@ def test_filter_toggle_clears_its_search_box_without_losing_focus(
 def test_item_tag_hover_shows_digit_hint_within_the_shortcut_group(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
     window._on_tag_create("vacation")
     window._refresh_all()
 
@@ -379,7 +393,7 @@ def test_item_tag_hover_past_the_shortcut_group_in_its_own_active_group_clears(
     entirely and hand it to selected ones instead. There's no move that
     helps this row, so the hint should go quiet rather than name a group
     that's already numbered (misleadingly implying Ctrl would number it)."""
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
     for i in range(11):
         window._on_tag_create(f"tag{i:02d}")
     window._refresh_all()
@@ -398,7 +412,7 @@ def test_item_tag_hover_over_selected_group_names_selected_tags(
     would move shortcuts to "selected tags", not the generic/wrong
     "unselected tags" text a mode-based (rather than row-based) check
     would produce."""
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
     window._on_tag_create("vacation")
     tag = window.session.tags.list_all()[0]  # type: ignore[union-attr]
     current_id = window.session.state.result_set[0]  # type: ignore[union-attr]
@@ -421,7 +435,7 @@ def test_item_tag_hover_past_the_shortcut_group_mirrors_for_selected_mode(
     should clear the hint rather than claim Ctrl would move shortcuts to
     selected tags -- they're already there, and Ctrl would only take them
     away."""
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
     for i in range(11):
         window._on_tag_create(f"tag{i:02d}")
     current_id = window.session.state.result_set[0]  # type: ignore[union-attr]
@@ -440,7 +454,7 @@ def test_item_tag_hover_past_the_shortcut_group_mirrors_for_selected_mode(
 def test_recently_clicked_tag_floats_to_the_top_of_both_panels(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
+    open_and_wait(qtbot, window, collection_dir)
     window._on_tag_create("alpha")
     window._on_tag_create("beta")
     current_id = window.session.state.result_set[0]  # type: ignore[union-attr]
@@ -465,14 +479,10 @@ def test_checking_a_tag_appends_it_to_the_bottom_of_the_checked_group(
     popularity/recency algorithm would in fact put alpha first (it's the
     more recently clicked one), so this only passes if checking really is
     appending to a stable order rather than re-running that algorithm."""
-    _open_and_wait(qtbot, window, collection_dir)
-    window._on_tag_create("alpha")
-    window._on_tag_create("beta")
-    window._on_tag_create("gamma")
-    current_id = window.session.state.result_set[0]  # type: ignore[union-attr]
-    window.session.state.current_item = current_id  # type: ignore[union-attr]
-    window._refresh_all()
-    tags_by_name = {t.name: t.id for t in window.session.tags.list_all()}  # type: ignore[union-attr]
+    open_and_wait(qtbot, window, collection_dir)
+    _first_id, _second_id, tags_by_name = _create_tags_on_first_item(
+        window, ("alpha", "beta", "gamma")
+    )
 
     window._on_item_tag_toggle(tags_by_name["gamma"])
     window._on_item_tag_toggle(tags_by_name["alpha"])
@@ -484,14 +494,10 @@ def test_checking_a_tag_appends_it_to_the_bottom_of_the_checked_group(
 def test_unchecking_a_tag_drops_it_without_reordering_the_rest(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
-    window._on_tag_create("alpha")
-    window._on_tag_create("beta")
-    window._on_tag_create("gamma")
-    current_id = window.session.state.result_set[0]  # type: ignore[union-attr]
-    window.session.state.current_item = current_id  # type: ignore[union-attr]
-    window._refresh_all()
-    tags_by_name = {t.name: t.id for t in window.session.tags.list_all()}  # type: ignore[union-attr]
+    open_and_wait(qtbot, window, collection_dir)
+    _first_id, _second_id, tags_by_name = _create_tags_on_first_item(
+        window, ("alpha", "beta", "gamma")
+    )
 
     window._on_item_tag_toggle(tags_by_name["gamma"])
     window._on_item_tag_toggle(tags_by_name["alpha"])
@@ -506,13 +512,8 @@ def test_unchecking_a_tag_drops_it_without_reordering_the_rest(
 def test_switching_files_resorts_the_checked_group_by_the_usual_algorithm(
     qtbot: QtBot, window: MainWindow, collection_dir: Path
 ) -> None:
-    _open_and_wait(qtbot, window, collection_dir)
-    window._on_tag_create("alpha")
-    window._on_tag_create("gamma")
-    first_id, second_id = window.session.state.result_set  # type: ignore[union-attr]
-    window.session.state.current_item = first_id  # type: ignore[union-attr]
-    window._refresh_all()
-    tags_by_name = {t.name: t.id for t in window.session.tags.list_all()}  # type: ignore[union-attr]
+    open_and_wait(qtbot, window, collection_dir)
+    first_id, second_id, tags_by_name = _create_tags_on_first_item(window, ("alpha", "gamma"))
 
     window._on_item_tag_toggle(tags_by_name["gamma"])
     window._on_item_tag_toggle(tags_by_name["alpha"])

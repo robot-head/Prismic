@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from prismic.domain.collection import Collection
-from prismic.domain.media import MediaState
+from prismic.domain.media import Media, MediaState
 from prismic.indexing.reconciler import HashedFile, Reconciler, run_reconciliation
 from prismic.persistence.repositories.media_repository import MediaRepository
 from prismic.persistence.repositories.scan_stats_repository import ScanStatsRepository
@@ -29,6 +29,25 @@ def _run(reconciler: Reconciler, collection: Collection, connection: sqlite3.Con
     generation = reconciler.begin_scan()
     result = run_reconciliation(reconciler, collection, generation, connection)
     assert result.applied
+
+
+def _record_one_file(
+    collection: Collection,
+    reconciler: Reconciler,
+    media_repository: MediaRepository,
+    connection: sqlite3.Connection,
+) -> Media:
+    (collection.root / "a.jpg").write_bytes(b"content")
+    _run(reconciler, collection, connection)
+    return media_repository.list_all()[0]
+
+
+def _scan_two_files(
+    collection: Collection, reconciler: Reconciler, connection: sqlite3.Connection
+) -> None:
+    (collection.root / "a.jpg").write_bytes(b"content")
+    (collection.root / "b.jpg").write_bytes(b"more content")
+    _run(reconciler, collection, connection)
 
 
 def test_new_file_gets_a_new_identity(
@@ -144,10 +163,8 @@ def test_missing_file_is_marked_missing_not_deleted(
     media_repository: MediaRepository,
     migrated_connection: sqlite3.Connection,
 ) -> None:
+    original = _record_one_file(collection, reconciler, media_repository, migrated_connection)
     target = collection.root / "a.jpg"
-    target.write_bytes(b"content")
-    _run(reconciler, collection, migrated_connection)
-    original = media_repository.list_all()[0]
 
     target.unlink()
     _run(reconciler, collection, migrated_connection)
@@ -177,10 +194,7 @@ def test_unreadable_file_is_skipped_without_disturbing_its_recorded_state(
     media_repository: MediaRepository,
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    target = collection.root / "a.jpg"
-    target.write_bytes(b"content")
-    _run(reconciler, collection, migrated_connection)
-    original = media_repository.list_all()[0]
+    original = _record_one_file(collection, reconciler, media_repository, migrated_connection)
 
     generation = reconciler.begin_scan()
     result = reconciler.reconcile(
@@ -224,9 +238,7 @@ def test_scan_reports_progress_against_the_previous_scans_count(
     reconciler: Reconciler,
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    (collection.root / "a.jpg").write_bytes(b"content")
-    (collection.root / "b.jpg").write_bytes(b"more content")
-    _run(reconciler, collection, migrated_connection)  # first scan: no prior count to report
+    _scan_two_files(collection, reconciler, migrated_connection)  # no prior count to report yet
 
     (collection.root / "c.jpg").write_bytes(b"even more content")
     calls: list[tuple[int, int]] = []
@@ -251,10 +263,7 @@ def test_scan_persists_its_own_file_count_for_the_next_scan_to_use(
     reconciler: Reconciler,
     migrated_connection: sqlite3.Connection,
 ) -> None:
-    (collection.root / "a.jpg").write_bytes(b"content")
-    (collection.root / "b.jpg").write_bytes(b"more content")
-
-    _run(reconciler, collection, migrated_connection)
+    _scan_two_files(collection, reconciler, migrated_connection)
 
     assert ScanStatsRepository(migrated_connection).get_last_file_count() == 2
 
@@ -376,6 +385,34 @@ def _write_settled(path: Path, content: bytes, mtime: float = _OLD_MTIME) -> Non
     os.utime(path, ns=(int(mtime * 1e9), int(mtime * 1e9)))
 
 
+def _rewrite_and_reconcile(
+    target: Path,
+    content: bytes,
+    reconciler: Reconciler,
+    collection: Collection,
+    connection: sqlite3.Connection,
+    mtime: float = _OLD_MTIME,
+) -> None:
+    _write_settled(target, content, mtime)
+    _run(reconciler, collection, connection)
+
+
+def _hash_calls_for_rewrite(
+    collection: Collection,
+    reconciler: Reconciler,
+    connection: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    content: bytes,
+    mtime: float = _OLD_MTIME,
+) -> list[object]:
+    target = collection.root / "a.jpg"
+    _write_settled(target, b"content")
+    _run(reconciler, collection, connection)
+    calls = _count_hash_calls(monkeypatch)
+    _rewrite_and_reconcile(target, content, reconciler, collection, connection, mtime)
+    return calls
+
+
 def _count_hash_calls(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     import prismic.indexing.reconciler as reconciler_module
 
@@ -415,13 +452,9 @@ def test_changed_size_is_rehashed_and_detected(
     migrated_connection: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    target = collection.root / "a.jpg"
-    _write_settled(target, b"content")
-    _run(reconciler, collection, migrated_connection)
-    calls = _count_hash_calls(monkeypatch)
-
-    _write_settled(target, b"longer content")  # same mtime, different size
-    _run(reconciler, collection, migrated_connection)
+    calls = _hash_calls_for_rewrite(
+        collection, reconciler, migrated_connection, monkeypatch, b"longer content"
+    )  # same mtime, different size
 
     assert len(calls) == 1
     assert [m.state for m in media_repository.list_all()] == [MediaState.MISSING, MediaState.ACTIVE]
@@ -433,13 +466,14 @@ def test_changed_mtime_is_rehashed(
     migrated_connection: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    target = collection.root / "a.jpg"
-    _write_settled(target, b"content")
-    _run(reconciler, collection, migrated_connection)
-    calls = _count_hash_calls(monkeypatch)
-
-    _write_settled(target, b"CONTENT", mtime=_OLD_MTIME + 5)  # same size, newer mtime
-    _run(reconciler, collection, migrated_connection)
+    calls = _hash_calls_for_rewrite(
+        collection,
+        reconciler,
+        migrated_connection,
+        monkeypatch,
+        b"CONTENT",
+        mtime=_OLD_MTIME + 5,
+    )  # same size, newer mtime
 
     assert len(calls) == 1
 

@@ -38,6 +38,24 @@ def row_for(dialog: SettingsDialog, shortcut_id: str) -> ShortcutRow:
     raise AssertionError(f"no row for {shortcut_id}")
 
 
+def start_capture(
+    qtbot: QtBot, dialog: SettingsDialog, shortcut_id: str = shortcuts.OPEN_COLLECTION_FOLDER
+) -> KeyCaptureButton:
+    button = row_for(dialog, shortcut_id)._editor
+    assert isinstance(button, KeyCaptureButton)
+    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    return button
+
+
+def capture_key(
+    qtbot: QtBot,
+    dialog: SettingsDialog,
+    key: Qt.Key,
+    modifiers: Qt.KeyboardModifier,
+) -> None:
+    qtbot.keyClick(start_capture(qtbot, dialog), key, modifiers)
+
+
 def accept_all(monkeypatch: pytest.MonkeyPatch) -> None:
     """Answer Yes to every confirmation the dialog raises, so a test can
     drive a flow that passes through one without blocking on it."""
@@ -149,9 +167,7 @@ def test_clicking_the_key_box_starts_capturing(qtbot: QtBot, dialog: SettingsDia
 def test_pressing_a_key_while_capturing_rebinds_the_shortcut(
     qtbot: QtBot, dialog: SettingsDialog, bindings: ShortcutBindings
 ) -> None:
-    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
-    assert isinstance(button, KeyCaptureButton)
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    button = start_capture(qtbot, dialog)
 
     qtbot.keyClick(button, Qt.Key.Key_F5)
 
@@ -163,9 +179,7 @@ def test_pressing_a_key_while_capturing_rebinds_the_shortcut(
 def test_capturing_records_the_modifiers_too(
     qtbot: QtBot, dialog: SettingsDialog, bindings: ShortcutBindings
 ) -> None:
-    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
-    assert isinstance(button, KeyCaptureButton)
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    button = start_capture(qtbot, dialog)
 
     qtbot.keyClick(
         button,
@@ -179,9 +193,7 @@ def test_capturing_records_the_modifiers_too(
 def test_a_bare_modifier_does_not_end_the_capture(qtbot: QtBot, dialog: SettingsDialog) -> None:
     """Ctrl on its own is the user starting a combination, not finishing
     one -- the box keeps waiting for the rest."""
-    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
-    assert isinstance(button, KeyCaptureButton)
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    button = start_capture(qtbot, dialog)
 
     qtbot.keyPress(button, Qt.Key.Key_Control)
 
@@ -196,9 +208,7 @@ def test_closing_the_window_mid_capture_releases_the_keyboard(
     nothing on screen to explain why. Losing focus is the usual way out,
     but closing the window mid-capture doesn't reliably deliver a
     focus-out first."""
-    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
-    assert isinstance(button, KeyCaptureButton)
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    button = start_capture(qtbot, dialog)
     assert button.is_capturing
 
     dialog.close()
@@ -210,9 +220,7 @@ def test_closing_the_window_mid_capture_releases_the_keyboard(
 def test_escape_cancels_a_capture_without_changing_anything(
     qtbot: QtBot, dialog: SettingsDialog, bindings: ShortcutBindings
 ) -> None:
-    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
-    assert isinstance(button, KeyCaptureButton)
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    button = start_capture(qtbot, dialog)
 
     qtbot.keyClick(button, Qt.Key.Key_Escape)
 
@@ -231,9 +239,7 @@ def test_capturing_tab_binds_tab_rather_than_moving_focus(
     bindable -- Tab most of all, since it's a real default here. (It's
     already taken by the tag-search cycle, hence the conflict prompt.)"""
     accept_all(monkeypatch)
-    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
-    assert isinstance(button, KeyCaptureButton)
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+    button = start_capture(qtbot, dialog)
 
     qtbot.keyClick(button, Qt.Key.Key_Tab)
 
@@ -374,11 +380,7 @@ def test_taking_a_key_from_another_shortcut_asks_first_and_clears_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     accept_all(monkeypatch)
-    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
-    assert isinstance(button, KeyCaptureButton)
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
-
-    qtbot.keyClick(button, Qt.Key.Key_T, Qt.KeyboardModifier.ControlModifier)
+    capture_key(qtbot, dialog, Qt.Key.Key_T, Qt.KeyboardModifier.ControlModifier)
 
     assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+T"
     assert bindings.binding(shortcuts.TOGGLE_THUMBNAILS) == ""
@@ -393,11 +395,7 @@ def test_declining_the_conflict_leaves_both_shortcuts_alone(
     monkeypatch.setattr(
         MessageDialog, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Cancel
     )
-    button = row_for(dialog, shortcuts.OPEN_COLLECTION_FOLDER)._editor
-    assert isinstance(button, KeyCaptureButton)
-    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
-
-    qtbot.keyClick(button, Qt.Key.Key_T, Qt.KeyboardModifier.ControlModifier)
+    capture_key(qtbot, dialog, Qt.Key.Key_T, Qt.KeyboardModifier.ControlModifier)
 
     assert bindings.binding(shortcuts.OPEN_COLLECTION_FOLDER) == "Ctrl+O"
     assert bindings.binding(shortcuts.TOGGLE_THUMBNAILS) == "Ctrl+T"

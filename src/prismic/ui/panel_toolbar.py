@@ -27,16 +27,13 @@ _BUTTON_SIZE = 22
 _ICON_MARGIN = 5
 
 
-class _ToggleIconButton(QToolButton):
-    """A checkable, hand-painted icon button.
+class _IconButton(QToolButton):
+    """A hand-painted icon button with shared sizing and rendering.
 
     Same "paint it, don't trust an emoji glyph or a bitmap asset"
     approach `TagRowDelegate` takes for its row icons, so these read as
-    the same visual language rather than a mismatched import. Checked
-    state is colour, not a different icon -- the same accent green
-    everything else in this app already uses for "this is active" (a
-    checked tag's checkbox, a captured shortcut's keycap border), not a
-    swapped glyph.
+    the same visual language rather than a mismatched import. The concrete
+    button chooses its icon colour from its checked or enabled state.
 
     No native tooltip: like the viewer's play/pause button (also a plain
     `QPushButton`/`QToolButton` with no `QAction` behind it), the live
@@ -49,13 +46,7 @@ class _ToggleIconButton(QToolButton):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("panelToolbarButton")
-        self.setCheckable(True)
         self.setFixedSize(_BUTTON_SIZE, _BUTTON_SIZE)
-        # Not part of tab order: neither toggle is something Tab should
-        # land on between the two tag search boxes (see
-        # `MainWindow._cycle_tag_search_focus`), and a mouse hover (for
-        # the explainer bar) or the keyboard shortcut is how either is
-        # discovered/used, not tabbing to it.
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
     def paintEvent(self, event: QPaintEvent) -> None:
@@ -65,41 +56,37 @@ class _ToggleIconButton(QToolButton):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        color = theme.KEYCAP_BORDER if self.isChecked() else theme.TEXT_SECONDARY
+        color = self._icon_color()
         painter.setPen(QPen(QColor(color), 1.5))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         rect = self.rect().adjusted(_ICON_MARGIN, _ICON_MARGIN, -_ICON_MARGIN, -_ICON_MARGIN)
         self._paint_icon(painter, rect)
 
+    def _icon_color(self) -> str:
+        raise NotImplementedError
+
     def _paint_icon(self, painter: QPainter, rect: QRect) -> None:
         raise NotImplementedError
 
 
-class _ActionIconButton(QToolButton):
-    """A plain (non-checkable) hand-painted icon button -- same visual
-    language as `_ToggleIconButton`, but for a momentary action (undo,
-    redo) rather than a persistent view toggle, so it has no checked
-    state at all: just enabled/disabled, greyed out via Qt's own
-    disabled-widget styling when there's nothing to do."""
+class _ToggleIconButton(_IconButton):
+    """A checkable, hand-painted icon button."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setObjectName("panelToolbarButton")
-        self.setFixedSize(_BUTTON_SIZE, _BUTTON_SIZE)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setCheckable(True)
+        # Not part of tab order: mouse hover and the keyboard shortcut are
+        # how this toggle is discovered, not tabbing to it.
 
-    def paintEvent(self, event: QPaintEvent) -> None:
-        super().paintEvent(event)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        color = theme.TEXT_SECONDARY if self.isEnabled() else theme.BORDER
-        painter.setPen(QPen(QColor(color), 1.5))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        rect = self.rect().adjusted(_ICON_MARGIN, _ICON_MARGIN, -_ICON_MARGIN, -_ICON_MARGIN)
-        self._paint_icon(painter, rect)
+    def _icon_color(self) -> str:
+        return theme.KEYCAP_BORDER if self.isChecked() else theme.TEXT_SECONDARY
 
-    def _paint_icon(self, painter: QPainter, rect: QRect) -> None:
-        raise NotImplementedError
+
+class _ActionIconButton(_IconButton):
+    """A plain icon for a momentary action, greyed out when disabled."""
+
+    def _icon_color(self) -> str:
+        return theme.TEXT_SECONDARY if self.isEnabled() else theme.BORDER
 
 
 def _paint_chevron(painter: QPainter, rect: QRect, *, pointing_left: bool) -> None:

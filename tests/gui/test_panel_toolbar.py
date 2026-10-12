@@ -16,6 +16,8 @@ from prismic.ui.main_window import MainWindow
 def window(qtbot: QtBot) -> MainWindow:
     win = MainWindow()
     qtbot.addWidget(win)
+    win.show()
+    qtbot.waitExposed(win)
     return win
 
 
@@ -24,6 +26,17 @@ def open_window(qtbot: QtBot, window: MainWindow, collection_dir: Path) -> MainW
     window.open_collection(collection_dir)
     qtbot.waitUntil(lambda: window.result_model.rowCount() == 2, timeout=5000)
     return window
+
+
+def _toggle_shuffle_once(
+    qtbot: QtBot, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> list[int]:
+    session = window.session
+    assert session is not None
+    original_order = list(session.state.result_set)
+    monkeypatch.setattr("random.shuffle", lambda seq: seq.reverse())
+    qtbot.mouseClick(window.panel_toolbar.shuffle_button, Qt.MouseButton.LeftButton)
+    return original_order
 
 
 def _media(media_id: int, path: str) -> Media:
@@ -71,9 +84,7 @@ def test_a_tag_change_enables_undo_and_a_click_reverts_it(
     assert open_window.panel_toolbar.redo_button.isEnabled()
 
 
-def test_a_click_on_redo_reapplies_the_undone_change(
-    qtbot: QtBot, open_window: MainWindow
-) -> None:
+def test_a_click_on_redo_reapplies_the_undone_change(qtbot: QtBot, open_window: MainWindow) -> None:
     session = open_window.session
     assert session is not None
     open_window._on_tag_create("vacation")
@@ -165,12 +176,7 @@ def test_a_newly_eligible_item_is_spliced_in_at_a_random_position(
 def test_toggling_shuffle_reorders_the_result_list(
     qtbot: QtBot, open_window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    session = open_window.session
-    assert session is not None
-    original_order = list(session.state.result_set)
-    monkeypatch.setattr("random.shuffle", lambda seq: seq.reverse())
-
-    qtbot.mouseClick(open_window.panel_toolbar.shuffle_button, Qt.MouseButton.LeftButton)
+    original_order = _toggle_shuffle_once(qtbot, open_window, monkeypatch)
 
     assert open_window._display_order == list(reversed(original_order))
     assert open_window.result_model.media_at(0).id == original_order[-1]
@@ -194,11 +200,7 @@ def test_the_shuffled_arrangement_survives_an_unrelated_refresh(
 def test_toggling_shuffle_off_restores_the_natural_order(
     qtbot: QtBot, open_window: MainWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    session = open_window.session
-    assert session is not None
-    original_order = list(session.state.result_set)
-    monkeypatch.setattr("random.shuffle", lambda seq: seq.reverse())
-    qtbot.mouseClick(open_window.panel_toolbar.shuffle_button, Qt.MouseButton.LeftButton)
+    original_order = _toggle_shuffle_once(qtbot, open_window, monkeypatch)
 
     qtbot.mouseClick(open_window.panel_toolbar.shuffle_button, Qt.MouseButton.LeftButton)
 
