@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QImage, QKeyEvent, QMouseEvent, QWheelEvent
+from PySide6.QtCore import QByteArray, QEvent, QMargins, QPoint, QPointF, Qt
+from PySide6.QtGui import QColor, QImage, QKeyEvent, QMouseEvent, QPixmap, QWheelEvent
 from PySide6.QtMultimedia import QMediaPlayer
 from pytestqt.qtbot import QtBot
 
@@ -11,6 +11,7 @@ from prismic.domain.media import Media, MediaState
 from prismic.domain.tag import Tag
 from prismic.media import loader as loader_module
 from prismic.media.loader import ImageLoader
+from prismic.ui import viewer as viewer_module
 from prismic.ui.column_splitter import ColumnSplitter
 from prismic.ui.hover_explainer_bar import HoverExplainerBar
 from prismic.ui.hover_hint import HoverHintController
@@ -86,6 +87,17 @@ def test_tag_panel_reports_hovered_row_from_viewport_event(qtbot: QtBot) -> None
     assert rows == [0]
 
 
+def test_tag_panel_keeps_header_spacing_and_stretches_the_tag_list(qtbot: QtBot) -> None:
+    panel = TagPanel("Item tags")
+    qtbot.addWidget(panel)
+
+    assert panel.header.layout().contentsMargins() == QMargins(0, 0, 0, 0)
+    assert panel.header.layout().spacing() == 0
+    assert panel.layout().contentsMargins() == QMargins(0, 0, 0, 0)
+    assert panel.layout().spacing() == 0
+    assert panel.layout().stretch(1) == 1
+
+
 def test_hover_hints_show_on_enter_and_clear_on_leave(qtbot: QtBot) -> None:
     bar = HoverExplainerBar()
     widget = TransientMessageBar()
@@ -99,6 +111,16 @@ def test_hover_hints_show_on_enter_and_clear_on_leave(qtbot: QtBot) -> None:
 
     controller.eventFilter(widget, QEvent(QEvent.Type.Leave))
     assert bar._text_label.text() == ""
+
+
+def test_hover_explainer_keeps_keycap_and_message_layout_metrics(qtbot: QtBot) -> None:
+    bar = HoverExplainerBar()
+    qtbot.addWidget(bar)
+
+    assert bar._keys_layout.contentsMargins() == QMargins(0, 0, 0, 0)
+    assert bar._keys_layout.spacing() == 4
+    assert bar.layout().contentsMargins() == QMargins(6, 0, 6, 0)
+    assert bar.layout().spacing() == 8
 
 
 def test_exact_single_wheel_delta_zooms_in(qtbot: QtBot) -> None:
@@ -120,6 +142,33 @@ def test_exact_single_wheel_delta_zooms_in(qtbot: QtBot) -> None:
     view.wheelEvent(event)
 
     assert view.zoom > before
+
+
+def test_movie_frames_update_the_pixmap_and_late_frames_without_a_movie_are_ignored(
+    qtbot: QtBot,
+) -> None:
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(QImage(10, 10, QImage.Format.Format_RGB32))
+
+    # A queued frameChanged signal may arrive just after clear/stop removed
+    # the movie; it must be ignored while the still-image pixmap remains.
+    view._on_movie_frame()
+
+    class _Movie:
+        def __init__(self) -> None:
+            self.pixmap = QPixmap(10, 10)
+            self.pixmap.fill(QColor("#e02020"))
+
+        def currentPixmap(self) -> QPixmap:
+            return self.pixmap
+
+    movie = _Movie()
+    view._movie = movie
+    view._on_movie_frame()
+
+    assert view._pixmap_item is not None
+    assert view._pixmap_item.pixmap().toImage().pixelColor(0, 0) == QColor("#e02020")
 
 
 def test_default_image_loader_keeps_a_2048_pixel_image_at_full_size(
@@ -148,6 +197,26 @@ def test_video_controls_are_visible_for_video_and_hidden_after_clear(qtbot: QtBo
     assert viewer._controls.isHidden() is True
 
 
+def test_invalid_animation_is_declined_for_still_image_fallback(qtbot: QtBot, monkeypatch) -> None:
+    class _Reader:
+        def supportsAnimation(self) -> bool:
+            return True
+
+        def imageCount(self) -> int:
+            return 2
+
+    class _Movie:
+        def isValid(self) -> bool:
+            return False
+
+    monkeypatch.setattr(viewer_module, "QImageReader", lambda _path: _Reader())
+    monkeypatch.setattr(viewer_module, "QMovie", lambda _path: _Movie())
+    viewer = MediaViewer()
+    qtbot.addWidget(viewer)
+
+    assert viewer._try_show_animation(Path("broken.gif")) is False
+
+
 def test_video_position_updates_pause_while_the_slider_is_dragged(qtbot: QtBot) -> None:
     viewer = MediaViewer()
     qtbot.addWidget(viewer)
@@ -161,6 +230,15 @@ def test_video_position_updates_pause_while_the_slider_is_dragged(qtbot: QtBot) 
     slider.setSliderDown(True)
     viewer._on_position_changed(60)
     assert slider.value() == 40
+
+
+def test_video_duration_keeps_the_seek_slider_minimum_at_zero(qtbot: QtBot) -> None:
+    viewer = MediaViewer()
+    qtbot.addWidget(viewer)
+
+    viewer._on_duration_changed(120)
+
+    assert (viewer._seek_slider.minimum(), viewer._seek_slider.maximum()) == (0, 120)
 
 
 def test_playback_state_sets_the_matching_button_label(qtbot: QtBot) -> None:
