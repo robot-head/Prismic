@@ -25,18 +25,18 @@ def paint_play_badge(painter: QPainter, rect: QRectF, *, size_fraction: float) -
 def paint_thumbnail(
     painter: QPainter,
     rect: QRectF,
-    scaled: QPixmap | None,
-    position: QPoint | QPointF | None,
+    scaled_pixmap: QPixmap | None,
+    draw_position: QPoint | QPointF | None,
     *,
     is_video: bool,
-    size_fraction: float,
+    size_fraction: float = 0.26,
 ) -> None:
-    if scaled is None:
+    if scaled_pixmap is None:
         painter.fillRect(rect, QColor(theme.THUMB_PLACEHOLDER))
-    elif isinstance(position, QPoint):
-        painter.drawPixmap(position.x(), position.y(), scaled)
-    elif isinstance(position, QPointF):
-        painter.drawPixmap(position, scaled)
+    elif isinstance(draw_position, QPoint):
+        painter.drawPixmap(draw_position.x(), draw_position.y(), scaled_pixmap)
+    elif isinstance(draw_position, QPointF):
+        painter.drawPixmap(draw_position, scaled_pixmap)
     else:
         raise ValueError("a scaled thumbnail needs its draw position")
     if is_video:

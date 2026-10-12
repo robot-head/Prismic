@@ -14,16 +14,49 @@ import prismic.media.loader as loader
 @pytest.mark.parametrize(
     ("record", "field"),
     [
-        (collection_domain.Collection(Path("root"), Path("root/collection.prismic")), "root"),
         (
-            media_domain.Media(1, "photo.jpg", "hash", 1, 1.5, media_domain.MediaState.ACTIVE),
+            collection_domain.Collection(
+                root=Path("root"), database_path=Path("root/collection.prismic")
+            ),
+            "root",
+        ),
+        (
+            media_domain.Media(
+                id=1,
+                relative_path="photo.jpg",
+                content_hash="hash",
+                size=1,
+                mtime=1.5,
+                state=media_domain.MediaState.ACTIVE,
+            ),
             "relative_path",
         ),
-        (tag_domain.Tag(1, "travel"), "name"),
-        (scanner.ScannedFile("photo.jpg", Path("photo.jpg"), 1, 1.5), "relative_path"),
-        (reconciler.HashedFile("photo.jpg", "hash", 1, 1.5), "relative_path"),
+        (tag_domain.Tag(id=1, name="travel"), "name"),
+        (
+            scanner.ScannedFile(
+                relative_path="photo.jpg",
+                absolute_path=Path("photo.jpg"),
+                size=1,
+                mtime=1.5,
+            ),
+            "relative_path",
+        ),
+        (
+            reconciler.HashedFile(
+                relative_path="photo.jpg", content_hash="hash", size=1, mtime=1.5
+            ),
+            "relative_path",
+        ),
         (reconciler.ReconciliationResult(applied=True), "applied"),
-        (loader.ImageLoadResult(1, Path("photo.jpg"), None, None), "request_id"),
+        (
+            loader.ImageLoadResult(
+                request_id=1,
+                path=Path("photo.jpg"),
+                image=None,
+                error=None,
+            ),
+            "request_id",
+        ),
     ],
 )
 def test_value_records_are_frozen_and_slotted(record: object, field: str) -> None:

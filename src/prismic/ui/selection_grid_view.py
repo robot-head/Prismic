@@ -128,10 +128,10 @@ class SelectionGridView(QWidget):
             position = QPointF(x_off, y_off)
 
         paint_thumbnail(
-            painter,
-            rect,
-            scaled,
-            position,
+            painter=painter,
+            rect=rect,
+            scaled_pixmap=scaled,
+            draw_position=position,
             is_video=is_video,
             size_fraction=0.16,
         )

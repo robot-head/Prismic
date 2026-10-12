@@ -113,12 +113,11 @@ class ThumbnailDelegate(QStyledItemDelegate):
             position = QPoint(int(x_off), int(y_off))
 
         paint_thumbnail(
-            painter,
-            rect,
-            scaled,
-            position,
+            painter=painter,
+            rect=rect,
+            scaled_pixmap=scaled,
+            draw_position=position,
             is_video=is_video,
-            size_fraction=0.26,
         )
         if pixmap is None and not is_video and not self._thumbnails.provider.has_failed(media_id):
             self._request_thumbnail(media_id, name)

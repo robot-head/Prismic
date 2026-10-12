@@ -30,10 +30,12 @@ def test_commands_require_execute_and_undo_implementations() -> None:
 
 
 def test_command_private_state_is_not_constructor_input_or_repr() -> None:
-    mapping_command = MappingSetForManyCommand(frozenset(), tag_id=1, adding=True)
+    mapping_command = MappingSetForManyCommand(media_ids=frozenset(), tag_id=1, adding=True)
     assert "_changed_media_ids" not in repr(mapping_command)
     with pytest.raises(TypeError):
-        MappingSetForManyCommand(frozenset(), tag_id=1, adding=True, _changed_media_ids=[1])
+        MappingSetForManyCommand(
+            media_ids=frozenset(), tag_id=1, adding=True, _changed_media_ids=[1]
+        )
 
     delete_command = TagDeleteCommand(tag_id=1)
     assert "_was_selected" not in repr(delete_command)

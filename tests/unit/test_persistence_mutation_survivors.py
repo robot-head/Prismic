@@ -23,14 +23,26 @@ from tests.unit._migration_helpers import assert_migration_failure_preserves_ver
 
 
 def test_hash_cache_rejects_a_file_modified_within_the_two_second_safety_window() -> None:
-    scanned = ScannedFile("photo.jpg", Path("photo.jpg"), size=12, mtime=98.5)
-    recorded = Media(1, "photo.jpg", "known-hash", 12, 98.5, MediaState.ACTIVE)
+    scanned = ScannedFile(
+        relative_path="photo.jpg",
+        absolute_path=Path("photo.jpg"),
+        size=12,
+        mtime=98.5,
+    )
+    recorded = Media(
+        id=1,
+        relative_path="photo.jpg",
+        content_hash="known-hash",
+        size=12,
+        mtime=98.5,
+        state=MediaState.ACTIVE,
+    )
 
     assert _recorded_hash_if_unchanged(scanned, recorded, now=100.0) is None
 
 
 def test_hashed_file_is_frozen_and_uses_slots() -> None:
-    hashed = HashedFile("photo.jpg", "known-hash", size=12, mtime=98.5)
+    hashed = HashedFile(relative_path="photo.jpg", content_hash="known-hash", size=12, mtime=98.5)
 
     with pytest.raises(FrozenInstanceError):
         hashed.relative_path = "renamed.jpg"  # type: ignore[misc]
@@ -79,13 +91,26 @@ def test_previously_missing_media_is_reactivated_without_changing_identity(
     scanned_path: str,
 ) -> None:
     repository = media_repository.MediaRepository(migrated_connection)
-    original = repository.create(original_path, "same-content", 12, 98.5, MediaState.MISSING)
+    original = repository.create(
+        relative_path=original_path,
+        content_hash="same-content",
+        size=12,
+        mtime=98.5,
+        state=MediaState.MISSING,
+    )
     reconciler = Reconciler()
 
     result = reconciler.reconcile(
         migrated_connection,
         reconciler.begin_scan(),
-        [HashedFile(scanned_path, "same-content", size=12, mtime=98.5)],
+        [
+            HashedFile(
+                relative_path=scanned_path,
+                content_hash="same-content",
+                size=12,
+                mtime=98.5,
+            )
+        ],
     )
 
     restored = repository.get(original.id)
