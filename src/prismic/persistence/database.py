@@ -7,7 +7,7 @@ from pathlib import Path
 
 from prismic.persistence.errors import IncompatibleDatabaseError
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 def connect(database_path: Path) -> sqlite3.Connection:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 from prismic.domain.media import MediaState
-from prismic.persistence import database
+from prismic.persistence import database, migrations
 from prismic.persistence.repositories.mapping_repository import MappingRepository
 from prismic.persistence.repositories.media_repository import MediaRepository
 from prismic.persistence.repositories.tag_correlation_repository import TagCorrelationRepository
@@ -48,5 +48,5 @@ def test_default_throttle_recomputes_at_the_sixty_second_boundary(
     assert repository.best_correlations_from([tag_ids["first"]]) == {tag_ids["second"]: 1.0}
 
 
-def test_current_schema_version_constant_is_two() -> None:
-    assert database.CURRENT_SCHEMA_VERSION == 2
+def test_current_schema_version_constant_matches_the_migrations() -> None:
+    assert database.CURRENT_SCHEMA_VERSION == len(migrations.MIGRATIONS)
